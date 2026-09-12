@@ -1,4 +1,4 @@
-"""Advanced hidden-file support for Alera."""
+"""Cross-platform hidden-file support for Alera."""
 
 from __future__ import annotations
 
@@ -9,17 +9,39 @@ from typing import Iterable, Iterator
 
 
 class HiddenFiles:
-    """Manage filesystem-hidden files and directories across platforms.
+    """Manage hidden files/directories on Android, Linux, Windows, and macOS.
 
-    Unix-like systems use the conventional leading-dot name. Windows also
-    receives the native Hidden attribute. This is real filesystem metadata
-    where the operating system supports it; no library can guarantee that a
-    third-party file manager will obey its platform's hidden convention.
+    Alera uses platform-neutral pathlib operations everywhere. Unix-like and
+    Android environments use the leading-dot convention; Windows additionally
+    uses the native Hidden attribute. No third-party file manager API is
+    required, so the class works in ordinary Python installations and mobile
+    Python environments such as Termux/Pydroid.
     """
 
     def __init__(self, base_path: str | os.PathLike[str] = "") -> None:
         self.base_path = Path(base_path or Path.cwd()).expanduser().resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
+
+    @property
+    def platform(self) -> str:
+        if os.name == "nt":
+            return "windows"
+        if sys_platform := os.sys.platform:
+            if sys_platform.startswith("android"):
+                return "android"
+            if sys_platform == "darwin":
+                return "macos"
+            if sys_platform.startswith("linux"):
+                return "linux"
+        return "unknown"
+
+    @property
+    def mobile(self) -> bool:
+        return self.platform == "android"
+
+    @property
+    def desktop(self) -> bool:
+        return not self.mobile
 
     def _path(self, path: str | os.PathLike[str]) -> Path:
         candidate = Path(path).expanduser()
@@ -184,21 +206,6 @@ class HiddenFiles:
     def reveal(self, path: str | os.PathLike[str]) -> Path:
         return self.unhide(path)
 
-    def hidden_information(self, path: str | os.PathLike[str]) -> dict[str, object]:
-        item = self._path(path)
-        stat_result = item.stat() if item.exists() else None
-        return {
-            "path": str(item),
-            "name": item.name,
-            "exists": item.exists(),
-            "hidden": self.is_hidden(item),
-            "reason": self.hidden_reason(item),
-            "type": "directory" if item.is_dir() else "file" if item.is_file() else "other",
-            "size": stat_result.st_size if stat_result else 0,
-            "modified": stat_result.st_mtime if stat_result else None,
-            "native_windows_hidden": self._windows_hidden(item),
-        }
-
     def copy_hidden(self, source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> Path:
         src = self._path(source)
         dst = self._path(destination)
@@ -210,3 +217,20 @@ class HiddenFiles:
         if self.is_hidden(src) and not self.is_hidden(dst):
             dst = self.hide(dst)
         return dst
+
+    def hidden_information(self, path: str | os.PathLike[str]) -> dict[str, object]:
+        item = self._path(path)
+        stat_result = item.stat() if item.exists() else None
+        return {
+            "path": str(item),
+            "name": item.name,
+            "exists": item.exists(),
+            "hidden": self.is_hidden(item),
+            "reason": self.hidden_reason(item),
+            "platform": self.platform,
+            "mobile": self.mobile,
+            "type": "directory" if item.is_dir() else "file" if item.is_file() else "other",
+            "size": stat_result.st_size if stat_result else 0,
+            "modified": stat_result.st_mtime if stat_result else None,
+            "native_windows_hidden": self._windows_hidden(item),
+        }
