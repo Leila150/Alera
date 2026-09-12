@@ -8,18 +8,17 @@ import os
 import shutil
 import stat
 import tempfile
-import time
 from pathlib import Path
-from typing import Iterable, Iterator, Sequence
+from typing import Iterator
 
-from .exceptions import AleraBinError, AleraPathError, AleraValidationError
+from .exceptions import AleraPathError, AleraValidationError
 
 
 class FileExplorer:
     """A safe, batteries-included filesystem helper.
 
     ``base_path`` is optional. An empty value means the current working directory.
-    All relative paths are resolved beneath the explorer root.
+    Every operation is restricted to the explorer root.
     """
 
     def __init__(self, base_path: str | os.PathLike[str] = "") -> None:
@@ -29,12 +28,6 @@ class FileExplorer:
         except OSError as exc:
             raise AleraPathError(f"Unable to resolve base path: {raw}") from exc
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self._bin_path = self.base_path / ".alera_bin"
-        self._bin_path.mkdir(exist_ok=True)
-
-    @property
-    def bin_path(self) -> Path:
-        return self._bin_path
 
     def _path(self, path: str | os.PathLike[str] | None, *, allow_root: bool = True) -> Path:
         if path is None or str(path) == "":
@@ -48,8 +41,6 @@ class FileExplorer:
             result.relative_to(self.base_path)
         except ValueError as exc:
             raise AleraPathError(f"Path escapes explorer base: {path}") from exc
-        if result == self._bin_path or self._bin_path in result.parents:
-            raise AleraPathError("The internal Alera bin cannot be manipulated as a normal path.")
         return result
 
     @staticmethod
@@ -76,7 +67,8 @@ class FileExplorer:
         return self._path(path).is_dir()
 
     def create_folder(self, name: str | os.PathLike[str], path: str | os.PathLike[str] | None = None) -> Path:
-        target = self._path(Path(path or "") / name)
+        name = self._require_single(name)
+        target = self._path(Path(path or "") / name, allow_root=False)
         target.mkdir(parents=True, exist_ok=False)
         return target
 
@@ -86,6 +78,8 @@ class FileExplorer:
 
     def create_file(self, name: str | os.PathLike[str], contents: str = "") -> Path:
         name = self._require_single(name)
+        if not isinstance(contents, str):
+            raise AleraValidationError("contents must be a string.")
         target = self._path(name, allow_root=False)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("x", encoding="utf-8", newline="") as handle:
@@ -111,6 +105,8 @@ class FileExplorer:
             return handle.read()
 
     def write_file(self, name: str | os.PathLike[str], contents: str, encoding: str = "utf-8") -> Path:
+        if not isinstance(contents, str):
+            raise AleraValidationError("contents must be a string.")
         target = self._path(name, allow_root=False)
         target.parent.mkdir(parents=True, exist_ok=True)
         with target.open("w", encoding=encoding, newline="") as handle:
@@ -118,6 +114,8 @@ class FileExplorer:
         return target
 
     def append_file(self, name: str | os.PathLike[str], contents: str, encoding: str = "utf-8") -> Path:
+        if not isinstance(contents, str):
+            raise AleraValidationError("contents must be a string.")
         target = self._path(name, allow_root=False)
         with target.open("a", encoding=encoding, newline="") as handle:
             handle.write(contents)
@@ -142,6 +140,8 @@ class FileExplorer:
         src = self._path(source, allow_root=False)
         dst = self._path(destination, allow_root=False)
         if src.is_dir():
+            if dst == src or src in dst.parents:
+                raise AleraPathError("A directory cannot be copied into itself or one of its children.")
             return Path(shutil.copytree(src, dst, dirs_exist_ok=True))
         dst.parent.mkdir(parents=True, exist_ok=True)
         return Path(shutil.copy2(src, dst))
@@ -149,87 +149,33 @@ class FileExplorer:
     def move(self, source: str | os.PathLike[str], destination: str | os.PathLike[str]) -> Path:
         src = self._path(source, allow_root=False)
         dst = self._path(destination, allow_root=False)
+        if src.is_dir() and (dst == src or src in dst.parents):
+            raise AleraPathError("A directory cannot be moved into itself or one of its children.")
         dst.parent.mkdir(parents=True, exist_ok=True)
         return Path(shutil.move(str(src), str(dst)))
 
-    def _bin_destination(self, source: Path) -> Path:
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        candidate = self._bin_path / f"{stamp}_{source.name}"
-        counter = 1
-        while candidate.exists():
-            candidate = self._bin_path / f"{stamp}_{counter}_{source.name}"
-            counter += 1
-        return candidate
-
     def delete(self, name: str | os.PathLike[str]) -> Path:
+        """Permanently delete one file or directory, recursively when needed.
+
+        There is no recycle bin, trash directory, backup copy, or restore operation.
+        """
         name = self._require_single(name)
-        source = self._path(name, allow_root=False)
-        if not source.exists():
-            raise FileNotFoundError(source)
-        destination = self._bin_destination(source)
+        target = self._path(name, allow_root=False)
+        if not target.exists():
+            raise FileNotFoundError(target)
         try:
-            shutil.move(str(source), str(destination))
+            if target.is_dir():
+                shutil.rmtree(target)
+            else:
+                target.unlink()
         except OSError as exc:
-            raise AleraBinError(f"Could not move {source} to the Alera bin.") from exc
-        return destination
+            raise OSError(f"Could not permanently delete {target}.") from exc
+        return target
 
     def deletes(self, names: list[str | os.PathLike[str]]) -> list[Path]:
+        """Permanently delete every item in a required list."""
         self._require_list(names)
         return [self.delete(name) for name in names]
-
-    def list_bin(self) -> list[Path]:
-        return sorted((p for p in self._bin_path.iterdir() if p.name != ".metadata.json"), key=lambda p: p.name.lower())
-
-    def bin_information(self) -> list[dict[str, object]]:
-        result = []
-        for item in self.list_bin():
-            result.append({"name": item.name, "path": str(item), "type": "folder" if item.is_dir() else "file", "size": self._size(item)})
-        return result
-
-    def _find_bin_item(self, name: str) -> Path:
-        self._require_single(name)
-        matches = [p for p in self.list_bin() if p.name == str(name)]
-        if not matches:
-            raise FileNotFoundError(name)
-        return matches[0]
-
-    def restore(self, name: str | os.PathLike[str]) -> Path:
-        item = self._find_bin_item(name)
-        original_name = str(item.name).split("_", 2)[-1]
-        destination = self.base_path / original_name
-        if destination.exists():
-            stem, suffix = destination.stem, destination.suffix
-            index = 1
-            while destination.exists():
-                destination = self.base_path / f"{stem} (restored {index}){suffix}"
-                index += 1
-        return Path(shutil.move(str(item), str(destination)))
-
-    def spef_restore(self, names: list[str]) -> list[Path]:
-        self._require_list(names)
-        return [self.restore(name) for name in names]
-
-    def restore_bin(self) -> list[Path]:
-        return [self.restore(item.name) for item in list(self.list_bin())]
-
-    def bin_delete(self, name: str | os.PathLike[str]) -> None:
-        item = self._find_bin_item(name)
-        if item.is_dir():
-            shutil.rmtree(item)
-        else:
-            item.unlink()
-
-    def spef_delete(self, names: list[str]) -> None:
-        self._require_list(names)
-        for name in names:
-            self.bin_delete(name)
-
-    def clear_bin(self) -> None:
-        for item in self.list_bin():
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
 
     def list(self, path: str | os.PathLike[str] | None = None, *, include_hidden: bool = False) -> list[Path]:
         root = self._path(path)
@@ -256,15 +202,17 @@ class FileExplorer:
     def tree(self, path: str | os.PathLike[str] | None = None, *, max_depth: int | None = None) -> str:
         root = self._path(path)
         lines = [root.name or str(root)]
+
         def visit(folder: Path, prefix: str, depth: int) -> None:
             if max_depth is not None and depth >= max_depth:
                 return
-            children = sorted((p for p in folder.iterdir() if p != self._bin_path and not p.name.startswith(".")), key=lambda p: (p.is_file(), p.name.lower()))
+            children = sorted((p for p in folder.iterdir() if not p.name.startswith(".")), key=lambda p: (p.is_file(), p.name.lower()))
             for index, child in enumerate(children):
                 last = index == len(children) - 1
                 lines.append(prefix + ("└── " if last else "├── ") + child.name)
                 if child.is_dir():
                     visit(child, prefix + ("    " if last else "│   "), depth + 1)
+
         visit(root, "", 0)
         return "\n".join(lines)
 
@@ -275,8 +223,6 @@ class FileExplorer:
         needle = query if case_sensitive else query.lower()
         matches = []
         for item in root.rglob("*"):
-            if item == self._bin_path or self._bin_path in item.parents:
-                continue
             if files_only and not item.is_file():
                 continue
             haystack = item.name if case_sensitive else item.name.lower()
@@ -285,6 +231,8 @@ class FileExplorer:
         return sorted(matches, key=lambda p: str(p).lower())
 
     def find_by_extension(self, extension: str, path: str | os.PathLike[str] | None = None) -> list[Path]:
+        if not isinstance(extension, str) or not extension:
+            raise AleraValidationError("extension must be a non-empty string.")
         ext = extension if extension.startswith(".") else "." + extension
         return sorted((p for p in self.list_files(path, recursive=True) if p.suffix.lower() == ext.lower()), key=lambda p: str(p).lower())
 
@@ -295,6 +243,8 @@ class FileExplorer:
         return text.count(old) if count < 0 else min(text.count(old), count)
 
     def file_hash(self, name: str | os.PathLike[str], algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:
+        if chunk_size <= 0:
+            raise AleraValidationError("chunk_size must be greater than zero.")
         target = self._path(name)
         try:
             digest = hashlib.new(algorithm)
@@ -308,7 +258,17 @@ class FileExplorer:
     def metadata(self, name: str | os.PathLike[str]) -> dict[str, object]:
         target = self._path(name)
         info = target.stat()
-        return {"name": target.name, "path": str(target), "type": "folder" if target.is_dir() else "file", "size": self._size(target), "created": info.st_ctime, "modified": info.st_mtime, "accessed": info.st_atime, "mode": stat.filemode(info.st_mode), "readonly": not os.access(target, os.W_OK)}
+        return {
+            "name": target.name,
+            "path": str(target),
+            "type": "folder" if target.is_dir() else "file",
+            "size": self._size(target),
+            "created": info.st_ctime,
+            "modified": info.st_mtime,
+            "accessed": info.st_atime,
+            "mode": stat.filemode(info.st_mode),
+            "readonly": not os.access(target, os.W_OK),
+        }
 
     def json_metadata(self, name: str | os.PathLike[str]) -> str:
         return json.dumps(self.metadata(name), indent=2)
@@ -329,23 +289,34 @@ class FileExplorer:
         usage = shutil.disk_usage(self._path(path))
         return {"total": usage.total, "used": usage.used, "free": usage.free}
 
-    def temporary_file(self, suffix: str = "", prefix: str = "alera-") -> Path:
+    def temporary_file(self, *, suffix: str = "", prefix: str = "alera-") -> Path:
         fd, name = tempfile.mkstemp(suffix=suffix, prefix=prefix, dir=self.base_path)
         os.close(fd)
         return Path(name)
 
-    def temporary_folder(self, prefix: str = "alera-") -> Path:
+    def temporary_folder(self, *, prefix: str = "alera-") -> Path:
         return Path(tempfile.mkdtemp(prefix=prefix, dir=self.base_path))
 
     def permissions(self, name: str | os.PathLike[str]) -> dict[str, bool]:
-        target = self._path(name)
-        return {"read": os.access(target, os.R_OK), "write": os.access(target, os.W_OK), "execute": os.access(target, os.X_OK)}
+        mode = self._path(name).stat().st_mode
+        return {
+            "owner_read": bool(mode & stat.S_IRUSR),
+            "owner_write": bool(mode & stat.S_IWUSR),
+            "owner_execute": bool(mode & stat.S_IXUSR),
+            "group_read": bool(mode & stat.S_IRGRP),
+            "group_write": bool(mode & stat.S_IWGRP),
+            "group_execute": bool(mode & stat.S_IXGRP),
+            "other_read": bool(mode & stat.S_IROTH),
+            "other_write": bool(mode & stat.S_IWOTH),
+            "other_execute": bool(mode & stat.S_IXOTH),
+        }
 
     def set_readonly(self, name: str | os.PathLike[str], readonly: bool = True) -> Path:
         target = self._path(name)
         mode = target.stat().st_mode
         if readonly:
-            target.chmod(mode & ~stat.S_IWUSR & ~stat.S_IWGRP & ~stat.S_IWOTH)
+            mode &= ~stat.S_IWUSR
         else:
-            target.chmod(mode | stat.S_IWUSR)
+            mode |= stat.S_IWUSR
+        target.chmod(mode)
         return target
