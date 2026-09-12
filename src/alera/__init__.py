@@ -59,4 +59,4 @@ __all__ = [
     "restrictions", "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
