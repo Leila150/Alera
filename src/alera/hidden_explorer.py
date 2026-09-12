@@ -1,4 +1,4 @@
-"""A filesystem explorer with a dedicated hidden-item view."""
+"""Cross-platform hidden-aware filesystem explorer."""
 
 from __future__ import annotations
 
@@ -11,11 +11,12 @@ from .hidden import HiddenFiles
 
 
 class HiddenFileExplorer(FileExplorer):
-    """A richer FileExplorer with explicit hidden-file navigation.
+    """A mobile/PC-friendly FileExplorer with explicit hidden navigation.
 
-    Normal operations keep hidden items out of sight. ``show_hidden`` exposes
-    hidden user files while Alera's own internal ``.alera_bin`` remains
-    protected from ordinary browsing.
+    It relies only on Python's standard filesystem APIs, making it suitable
+    for desktop Python as well as Android Python environments such as Termux
+    and Pydroid. UI is intentionally not required: callers can build a CLI,
+    Android GUI, desktop GUI, or other interface on top of the same explorer.
     """
 
     def __init__(self, base_path: str | Path = "", show_hidden: bool = False) -> None:
@@ -24,9 +25,20 @@ class HiddenFileExplorer(FileExplorer):
         self.show_hidden = bool(show_hidden)
         self.current_path = self.base_path
 
+    @property
+    def platform(self) -> str:
+        return self.hidden.platform
+
+    @property
+    def mobile(self) -> bool:
+        return self.hidden.mobile
+
+    @property
+    def desktop(self) -> bool:
+        return self.hidden.desktop
+
     def _current(self, path: str | Path = "") -> Path:
-        target = self.current_path if path == "" else self._path(path)
-        return target
+        return self.current_path if path == "" else self._path(path)
 
     def set_show_hidden(self, enabled: bool = True) -> bool:
         self.show_hidden = bool(enabled)
@@ -43,7 +55,6 @@ class HiddenFileExplorer(FileExplorer):
         return self.show_hidden
 
     def enter(self, path: str | Path) -> Path:
-        """Enter a directory and make it the explorer's current location."""
         target = self._path(path)
         if not target.is_dir():
             raise NotADirectoryError(target)
@@ -58,9 +69,8 @@ class HiddenFileExplorer(FileExplorer):
         return self.enter(path)
 
     def up(self) -> Path:
-        if self.current_path == self.base_path:
-            return self.current_path
-        self.current_path = self.current_path.parent
+        if self.current_path != self.base_path:
+            self.current_path = self.current_path.parent
         return self.current_path
 
     def home(self) -> Path:
@@ -71,7 +81,6 @@ class HiddenFileExplorer(FileExplorer):
         return self.current_path
 
     def list(self, path: str | Path = "") -> list[Path]:
-        """List the current directory, respecting hidden visibility."""
         target = self._current(path)
         if target == self._bin_path or self._bin_path in target.parents:
             raise PermissionError("the Alera recycle bin is not browsable")
@@ -83,7 +92,6 @@ class HiddenFileExplorer(FileExplorer):
         )
 
     def list_all(self, path: str | Path = "") -> list[Path]:
-        """Return visible + hidden user items, excluding Alera internals."""
         target = self._current(path)
         return sorted(
             (p for p in target.iterdir() if p != self._bin_path),
@@ -91,7 +99,10 @@ class HiddenFileExplorer(FileExplorer):
         )
 
     def list_hidden(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
-        return [p for p in self.hidden.list_hidden(path, recursive) if p != self._bin_path and self._bin_path not in p.parents]
+        return [
+            p for p in self.hidden.list_hidden(path, recursive)
+            if p != self._bin_path and self._bin_path not in p.parents
+        ]
 
     def list_visible(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
         return self.hidden.list_visible(path, recursive)
@@ -120,6 +131,12 @@ class HiddenFileExplorer(FileExplorer):
     def create_hidden_folder(self, name: str, parents: bool = False) -> Path:
         return self.hidden.create_hidden_folder(name, parents)
 
+    def hide_all(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
+        return self.hidden.hide_all(path or self.current_path, recursive)
+
+    def unhide_all(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
+        return self.hidden.unhide_all(path or self.current_path, recursive)
+
     def hidden_count(self, path: str | Path = "") -> int:
         return len(self.list_hidden(path))
 
@@ -127,13 +144,9 @@ class HiddenFileExplorer(FileExplorer):
         return self.hidden.hidden_information(path)
 
     def hidden_tree(self, path: str | Path = "") -> str:
-        """Build a tree containing only hidden items."""
         root = self._current(path)
         lines = [root.name or str(root)]
-        hidden = self.list_hidden(root, recursive=True)
-        for item in hidden:
-            if self._bin_path in item.parents or item == self._bin_path:
-                continue
+        for item in self.list_hidden(root, recursive=True):
             try:
                 relative = item.relative_to(root)
             except ValueError:
@@ -142,7 +155,6 @@ class HiddenFileExplorer(FileExplorer):
         return "\n".join(lines)
 
     def walk(self, path: str | Path = "") -> Iterator[tuple[Path, list[Path], list[Path]]]:
-        """Walk while respecting hidden visibility and excluding Alera's bin."""
         root = self._current(path)
         for current, dirs, files in os.walk(root):
             current_path = Path(current)
@@ -156,14 +168,27 @@ class HiddenFileExplorer(FileExplorer):
             yield current_path, [current_path / d for d in dirs], [current_path / f for f in files]
 
     def search_hidden(self, pattern: str = "*", recursive: bool = True) -> list[Path]:
-        """Search only hidden items using pathlib glob patterns."""
         root = self._current()
         candidates = root.rglob(pattern) if recursive else root.glob(pattern)
         return sorted(
-            (p for p in candidates if self.hidden.is_hidden(p) and p != self._bin_path and self._bin_path not in p.parents),
+            (
+                p for p in candidates
+                if self.hidden.is_hidden(p)
+                and p != self._bin_path
+                and self._bin_path not in p.parents
+            ),
             key=lambda p: str(p).lower(),
         )
 
     def refresh(self) -> list[Path]:
-        """Refresh the current directory by returning its latest listing."""
         return self.list()
+
+    def information(self) -> dict[str, object]:
+        return {
+            "path": str(self.current_path),
+            "platform": self.platform,
+            "mobile": self.mobile,
+            "desktop": self.desktop,
+            "show_hidden": self.show_hidden,
+            "hidden_count": self.hidden_count(),
+        }
