@@ -33,6 +33,7 @@ from .paths import PathTools
 from .permissions import PermissionTools
 from .processes import ProcessManager
 from .recovery import RecoveryManager
+from .recycle_bin import RecycleBin
 from .search_engine import SearchEngine
 from .search_index import SearchIndex
 from .security import FileSecurity
@@ -51,7 +52,7 @@ __all__ = [
     "Alera", "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
     "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools",
     "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine", "SearchIndex", "StorageAnalyzer", "MetadataManager",
-    "LinkManager", "BackupManager", "RecoveryManager", "HealthChecker", "FileTransaction", "FileSecurity",
+    "LinkManager", "BackupManager", "RecoveryManager", "HealthChecker", "FileTransaction", "FileSecurity", "RecycleBin",
     "MountManager", "AndroidStorage", "FileInspector", "VirtualFileSystem", "DiskManager", "EncryptionManager",
     "VersionManager", "SyncManager", "FileUtilities", "CleanupManager", "FileDatabase", "ProcessManager",
     "NetworkManager", "StorageCalculator", "FilesystemAnalytics", "IntegrityManager",
