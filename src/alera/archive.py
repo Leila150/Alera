@@ -9,11 +9,10 @@ import lzma
 import os
 import shutil
 import tarfile
-import tempfile
 import zipfile
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import BinaryIO, Iterable, Iterator
+from typing import Iterable, Iterator
 
 from .exceptions import AleraPathError, AleraValidationError
 
@@ -38,27 +37,12 @@ class ArchiveManager:
     """
 
     BUILTIN_FORMATS = {
-        "zip",
-        "tar",
-        "tar.gz",
-        "tgz",
-        "gztar",
-        "tar.bz2",
-        "tbz2",
-        "tbz",
-        "bztar",
-        "tar.xz",
-        "txz",
-        "xztar",
-        "gz",
-        "gzip",
-        "bz2",
-        "bzip2",
-        "xz",
-        "lzma",
+        "zip", "tar", "tar.gz", "tgz", "gztar", "tar.bz2", "tbz2", "tbz",
+        "bztar", "tar.xz", "txz", "xztar", "gz", "gzip", "bz2", "bzip2", "xz", "lzma",
     }
-
-    _INTERNAL_PREFIXES = (".alera_bin/", ".alera_hidden/", ".alera_recovery/", ".alera_cache/", ".alera_versions/")
+    _INTERNAL_PREFIXES = (
+        ".alera_bin/", ".alera_hidden/", ".alera_recovery/", ".alera_cache/", ".alera_versions/",
+    )
 
     def __init__(self, base_path: str | Path = "") -> None:
         self.base_path = (Path(base_path).expanduser() if str(base_path) else Path.cwd()).resolve()
@@ -75,28 +59,24 @@ class ArchiveManager:
 
     @staticmethod
     def _normal_format(value: str | None) -> str:
-        if value is None:
-            return ""
-        return value.lower().strip().lstrip(".").replace("_", ".")
+        return "" if value is None else value.lower().strip().lstrip(".").replace("_", ".")
 
     @classmethod
     def _format(cls, value: str | None, archive: Path | None = None) -> str:
         fmt = cls._normal_format(value)
         if not fmt and archive is not None:
             name = archive.name.lower()
-            suffixes = [".tar.gz", ".tar.bz2", ".tar.xz", ".tgz", ".tbz2", ".tbz", ".txz"]
-            for suffix in suffixes:
+            composites = {
+                ".tar.gz": "tar.gz", ".tgz": "tar.gz", ".tar.bz2": "tar.bz2",
+                ".tbz2": "tar.bz2", ".tbz": "tar.bz2", ".tar.xz": "tar.xz", ".txz": "tar.xz",
+            }
+            for suffix, detected in composites.items():
                 if name.endswith(suffix):
-                    return {
-                        ".tar.gz": "tar.gz", ".tgz": "tar.gz",
-                        ".tar.bz2": "tar.bz2", ".tbz2": "tar.bz2", ".tbz": "tar.bz2",
-                        ".tar.xz": "tar.xz", ".txz": "tar.xz",
-                    }[suffix]
+                    return detected
             fmt = archive.suffix.lower().lstrip(".")
         aliases = {
-            "gztar": "tar.gz", "tgz": "tar.gz",
-            "bztar": "tar.bz2", "tbz": "tar.bz2", "tbz2": "tar.bz2",
-            "xztar": "tar.xz", "txz": "tar.xz",
+            "gztar": "tar.gz", "tgz": "tar.gz", "bztar": "tar.bz2", "tbz": "tar.bz2",
+            "tbz2": "tar.bz2", "xztar": "tar.xz", "txz": "tar.xz",
             "gzip": "gz", "bzip2": "bz2", "lzma": "xz",
         }
         fmt = aliases.get(fmt, fmt)
@@ -118,10 +98,9 @@ class ArchiveManager:
     @staticmethod
     def _safe_member(name: str) -> bool:
         normalized = name.replace("\\", "/")
-        if not normalized or normalized.startswith("/") or normalized.startswith("\\"):
+        if not normalized or normalized.startswith(("/", "\\")):
             return False
-        parts = [part for part in normalized.split("/") if part not in ("", ".")]
-        return ".." not in parts
+        return ".." not in [part for part in normalized.split("/") if part not in ("", ".")]
 
     @classmethod
     def _validate_members(cls, names: Iterable[str], destination: Path, max_members: int | None = None) -> None:
@@ -142,7 +121,7 @@ class ArchiveManager:
     @classmethod
     def _filtered(cls, name: str, include: Iterable[str] | None, exclude: Iterable[str] | None) -> bool:
         normalized = name.replace("\\", "/")
-        if any(normalized == p or normalized.startswith(p) for p in cls._INTERNAL_PREFIXES):
+        if any(normalized == p.rstrip("/") or normalized.startswith(p) for p in cls._INTERNAL_PREFIXES):
             return False
         if include and not any(fnmatch(normalized, pattern) for pattern in include):
             return False
@@ -150,12 +129,7 @@ class ArchiveManager:
             return False
         return True
 
-    def _iter_sources(
-        self,
-        sources: list[str | Path],
-        include: Iterable[str] | None,
-        exclude: Iterable[str] | None,
-    ) -> Iterator[tuple[Path, str]]:
+    def _iter_sources(self, sources: list[str | Path], include: Iterable[str] | None, exclude: Iterable[str] | None) -> Iterator[tuple[Path, str]]:
         if not isinstance(sources, list) or not sources:
             raise AleraValidationError("sources must be a non-empty list.")
         for source in sources:
@@ -171,23 +145,13 @@ class ArchiveManager:
             if self._filtered(root_name, include, exclude):
                 yield path, root_name
             for item in path.rglob("*"):
-                if item == path:
-                    continue
                 relative = item.relative_to(self.base_path).as_posix()
-                if not self._filtered(relative, include, exclude):
-                    continue
-                yield item, relative
+                if self._filtered(relative, include, exclude):
+                    yield item, relative
 
-    def create(
-        self,
-        archive: str | Path,
-        sources: list[str | Path],
-        format: str | None = None,
-        compression_level: int | None = None,
-        include: Iterable[str] | None = None,
-        exclude: Iterable[str] | None = None,
-        follow_symlinks: bool = False,
-    ) -> Path:
+    def create(self, archive: str | Path, sources: list[str | Path], format: str | None = None,
+               compression_level: int | None = None, include: Iterable[str] | None = None,
+               exclude: Iterable[str] | None = None, follow_symlinks: bool = False) -> Path:
         """Create an archive from files/directories with optional filtering."""
         target = self._path(archive)
         archive_format = self._format(format, target)
@@ -210,13 +174,21 @@ class ArchiveManager:
             kwargs = {"compresslevel": level} if archive_format in {"tar.gz", "tar.bz2"} else {}
             with tarfile.open(target, mode, **kwargs) as handle:
                 for path, arcname in entries:
-                    handle.add(path, arcname=arcname, recursive=False if path.is_dir() else False, filter=None)
+                    handle.add(path, arcname=arcname, recursive=False)
         elif archive_format in {"gz", "bz2", "xz"}:
             if len(entries) != 1 or not entries[0][0].is_file():
                 raise AleraValidationError("Standalone gz/bz2/xz archives require exactly one source file.")
             source, _ = entries[0]
-            opener = {"gz": gzip.open, "bz2": bz2.open, "xz": lzma.open}[archive_format]
-            with source.open("rb") as src, opener(target, "wb", compresslevel=level) if archive_format in {"gz", "bz2"} else opener(target, "wb", preset=level) as dst:
+            if archive_format == "gz":
+                opener = gzip.open
+                kwargs = {"compresslevel": level}
+            elif archive_format == "bz2":
+                opener = bz2.open
+                kwargs = {"compresslevel": level}
+            else:
+                opener = lzma.open
+                kwargs = {"preset": level}
+            with source.open("rb") as src, opener(target, "wb", **kwargs) as dst:
                 shutil.copyfileobj(src, dst, length=1024 * 1024)
         elif archive_format == "7z":
             try:
@@ -226,28 +198,20 @@ class ArchiveManager:
             with py7zr.SevenZipFile(target, "w") as handle:
                 for path, arcname in entries:
                     handle.write(path, arcname)
-        elif archive_format == "rar":
-            raise AleraValidationError("RAR creation is not supported by the optional rarfile backend; RAR archives are read/extracted only.")
+        else:
+            raise AleraValidationError("RAR creation is not supported; RAR archives are read/extracted only.")
         return target
 
-    def extract(
-        self,
-        archive: str | Path,
-        destination: str | Path = ".",
-        members: Iterable[str] | None = None,
-        include: Iterable[str] | None = None,
-        exclude: Iterable[str] | None = None,
-        max_members: int | None = 100_000,
-        max_total_size: int | None = 10 * 1024 * 1024 * 1024,
-        overwrite: bool = True,
-    ) -> Path:
+    def extract(self, archive: str | Path, destination: str | Path = ".", members: Iterable[str] | None = None,
+                include: Iterable[str] | None = None, exclude: Iterable[str] | None = None,
+                max_members: int | None = 100_000, max_total_size: int | None = 10 * 1024 * 1024 * 1024,
+                overwrite: bool = True) -> Path:
         """Safely extract an archive with traversal and archive-bomb limits."""
         source = self._path(archive)
         target = self._path(destination)
         if not source.is_file():
             raise FileNotFoundError(source)
         target.mkdir(parents=True, exist_ok=True)
-
         wanted = set(members) if members is not None else None
 
         def selected(name: str) -> bool:
@@ -363,11 +327,10 @@ class ArchiveManager:
                 for member in handle:
                     yield member.name
             return
-        for name in self.list_contents(source):
-            yield name
+        yield from self.list_contents(source)
 
     def information(self, archive: str | Path) -> dict[str, object]:
-        """Return archive format, size, members, compression, and checksum metadata."""
+        """Return format, size, members, compression ratio, and SHA-256."""
         source = self._path(archive)
         if not source.is_file():
             raise FileNotFoundError(source)
@@ -383,13 +346,9 @@ class ArchiveManager:
                 uncompressed_size = sum(m.size for m in handle.getmembers() if m.isfile())
         ratio = None if uncompressed_size == 0 else compressed_size / uncompressed_size
         return {
-            "path": str(source),
-            "format": format_name,
-            "size": compressed_size,
-            "members": len(names),
-            "uncompressed_size": uncompressed_size,
-            "compression_ratio": ratio,
-            "sha256": self.hash(archive),
+            "path": str(source), "format": format_name, "size": compressed_size,
+            "members": len(names), "uncompressed_size": uncompressed_size,
+            "compression_ratio": ratio, "sha256": self.hash(archive),
         }
 
     def hash(self, archive: str | Path, algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:
@@ -421,7 +380,7 @@ class ArchiveManager:
                         pass
                 return {"valid": True, "format": source.suffix.lower().lstrip("."), "members": 1}
             return {"valid": False, "format": "unknown", "members": 0}
-        except (OSError, EOFError, tarfile.TarError, zipfile.BadZipFile, lzma.LZMAError, bz2.BZ2Decompressor) as exc:
+        except (OSError, EOFError, ValueError, tarfile.TarError, zipfile.BadZipFile, lzma.LZMAError, EOFError) as exc:
             return {"valid": False, "format": "unknown", "members": 0, "error": str(exc)}
 
     def test(self, archive: str | Path) -> bool:
@@ -470,14 +429,7 @@ class ArchiveManager:
         except ImportError:
             rar = "optional dependency: rarfile"
         return {
-            "zip": "built-in",
-            "tar": "built-in",
-            "tar.gz": "built-in",
-            "tar.bz2": "built-in",
-            "tar.xz": "built-in",
-            "gz": "built-in standalone stream",
-            "bz2": "built-in standalone stream",
-            "xz": "built-in standalone stream",
-            "7z": seven,
-            "rar": rar,
+            "zip": "built-in", "tar": "built-in", "tar.gz": "built-in", "tar.bz2": "built-in",
+            "tar.xz": "built-in", "gz": "built-in standalone stream", "bz2": "built-in standalone stream",
+            "xz": "built-in standalone stream", "7z": seven, "rar": rar,
         }
