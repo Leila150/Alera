@@ -11,12 +11,13 @@ from .hidden import HiddenFiles
 
 
 class HiddenFileExplorer(FileExplorer):
-    """A mobile/PC-friendly FileExplorer with explicit hidden navigation.
+    """FileExplorer with real Android shared-storage hidden support.
 
-    It relies only on Python's standard filesystem APIs, making it suitable
-    for desktop Python as well as Android Python environments such as Termux
-    and Pydroid. UI is intentionally not required: callers can build a CLI,
-    Android GUI, desktop GUI, or other interface on top of the same explorer.
+    On Android, hidden objects may no longer physically exist at their public
+    path because they are stored under Alera's randomized shared-storage
+    directory. This explorer therefore treats hidden paths as virtual paths
+    and exposes them alongside normal files without leaking the randomized
+    storage names.
     """
 
     def __init__(self, base_path: str | Path = "", show_hidden: bool = False) -> None:
@@ -40,6 +41,42 @@ class HiddenFileExplorer(FileExplorer):
     def _current(self, path: str | Path = "") -> Path:
         return self.current_path if path == "" else self._path(path)
 
+    def _android_record(self, path: Path) -> dict[str, object] | None:
+        if not self.mobile:
+            return None
+        return self.hidden._android_record_for(path)
+
+    def _physical(self, path: Path) -> Path:
+        """Resolve an Android virtual hidden path to its physical path."""
+        if not self.mobile:
+            return path
+        record = self._android_record(path)
+        if record:
+            return Path(str(record["stored"]))
+
+        hidden = self.hidden.list_hidden(self.base_path, recursive=True)
+        best: tuple[Path, dict[str, object]] | None = None
+        for original in hidden:
+            try:
+                relative = path.relative_to(original)
+            except ValueError:
+                continue
+            record = self._android_record(original)
+            if record and (best is None or len(original.parts) > len(best[0].parts)):
+                best = (original, record)
+        if best is None:
+            return path
+        return Path(str(best[1]["stored"])) / path.relative_to(best[0])
+
+    def _virtual_children(self, path: Path) -> list[Path]:
+        physical = self._physical(path)
+        if not physical.is_dir():
+            return []
+        return sorted(
+            (path / item.name for item in physical.iterdir()),
+            key=lambda p: p.name.lower(),
+        )
+
     def set_show_hidden(self, enabled: bool = True) -> bool:
         self.show_hidden = bool(enabled)
         return self.show_hidden
@@ -56,10 +93,11 @@ class HiddenFileExplorer(FileExplorer):
 
     def enter(self, path: str | Path) -> Path:
         target = self._path(path)
-        if not target.is_dir():
-            raise NotADirectoryError(target)
         if target == self._bin_path or self._bin_path in target.parents:
             raise PermissionError("the Alera recycle bin is not browsable")
+        physical = self._physical(target)
+        if not physical.is_dir():
+            raise NotADirectoryError(target)
         if not self.show_hidden and self.hidden.is_hidden(target):
             raise PermissionError("hidden directory is not visible")
         self.current_path = target
@@ -84,19 +122,17 @@ class HiddenFileExplorer(FileExplorer):
         target = self._current(path)
         if target == self._bin_path or self._bin_path in target.parents:
             raise PermissionError("the Alera recycle bin is not browsable")
+        visible = self.hidden.list_visible(target)
         if not self.show_hidden:
-            return super().list(path if path else str(target))
-        return sorted(
-            (p for p in target.iterdir() if p != self._bin_path),
-            key=lambda p: p.name.lower(),
-        )
+            return visible
+        hidden = self.hidden.list_hidden(target)
+        if self.mobile and self.hidden.is_hidden(target):
+            hidden = self._virtual_children(target)
+        return sorted(set(visible + hidden), key=lambda p: p.name.lower())
 
     def list_all(self, path: str | Path = "") -> list[Path]:
         target = self._current(path)
-        return sorted(
-            (p for p in target.iterdir() if p != self._bin_path),
-            key=lambda p: p.name.lower(),
-        )
+        return self.list(target) if self.show_hidden else self.hidden.list_visible(target)
 
     def list_hidden(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
         return [
@@ -108,10 +144,10 @@ class HiddenFileExplorer(FileExplorer):
         return self.hidden.list_visible(path, recursive)
 
     def hidden_files(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
-        return [p for p in self.list_hidden(path, recursive) if p.is_file()]
+        return self.hidden.hidden_files(path, recursive)
 
     def hidden_folders(self, path: str | Path = "", recursive: bool = False) -> list[Path]:
-        return [p for p in self.list_hidden(path, recursive) if p.is_dir()]
+        return self.hidden.hidden_folders(path, recursive)
 
     def hide(self, path: str | Path) -> Path:
         return self.hidden.hide(path)
@@ -156,6 +192,15 @@ class HiddenFileExplorer(FileExplorer):
 
     def walk(self, path: str | Path = "") -> Iterator[tuple[Path, list[Path], list[Path]]]:
         root = self._current(path)
+        if self.mobile and self.hidden.is_hidden(root):
+            physical = self._physical(root)
+            for current, dirs, files in os.walk(physical):
+                current_physical = Path(current)
+                relative = current_physical.relative_to(physical)
+                current_virtual = root / relative
+                yield current_virtual, [current_virtual / d for d in dirs], [current_virtual / f for f in files]
+            return
+
         for current, dirs, files in os.walk(root):
             current_path = Path(current)
             if self._bin_path in current_path.parents or current_path == self._bin_path:
@@ -168,17 +213,8 @@ class HiddenFileExplorer(FileExplorer):
             yield current_path, [current_path / d for d in dirs], [current_path / f for f in files]
 
     def search_hidden(self, pattern: str = "*", recursive: bool = True) -> list[Path]:
-        root = self._current()
-        candidates = root.rglob(pattern) if recursive else root.glob(pattern)
-        return sorted(
-            (
-                p for p in candidates
-                if self.hidden.is_hidden(p)
-                and p != self._bin_path
-                and self._bin_path not in p.parents
-            ),
-            key=lambda p: str(p).lower(),
-        )
+        candidates = self.hidden.list_hidden(self._current(), recursive=recursive)
+        return sorted((p for p in candidates if p.match(pattern)), key=lambda p: str(p).lower())
 
     def refresh(self) -> list[Path]:
         return self.list()
@@ -191,4 +227,7 @@ class HiddenFileExplorer(FileExplorer):
             "desktop": self.desktop,
             "show_hidden": self.show_hidden,
             "hidden_count": self.hidden_count(),
+            "storage_backend": self.hidden.storage_backend,
+            "android_shared_storage": str(self.hidden.android_shared_storage) if self.mobile and self.hidden.android_shared_storage else None,
+            "android_hidden_storage": str(self.hidden.android_hidden_storage) if self.mobile else None,
         }
