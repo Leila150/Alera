@@ -27,9 +27,7 @@ class Experimental:
     """Gateway for advanced and platform-specific Alera capabilities.
 
     Experimental functionality lives here so the stable FileExplorer API can
-    remain small.  The class intentionally uses the standard library only.
-    Android shared-storage hiding is supported through HiddenFiles when the
-    platform exposes usable shared storage.
+    remain small. The standard library is used wherever possible.
     """
 
     def __init__(self, base_path: str | Path = "") -> None:
@@ -65,8 +63,15 @@ class Experimental:
     def safety_mode(self, enabled: bool) -> None:
         self._safety_mode = bool(enabled)
 
+    def allow_destructive_operations(self) -> None:
+        """Explicitly disable the experimental safety gate for this instance."""
+        self._safety_mode = False
+
+    def require_destructive_access(self) -> None:
+        if self._safety_mode:
+            raise PermissionError("Destructive experimental operation blocked by safety_mode=True.")
+
     def features(self) -> dict[str, Any]:
-        """Return the advanced capability matrix for this environment."""
         return {
             "platform": self.platform,
             "android": self.android,
@@ -80,25 +85,20 @@ class Experimental:
             "file_owner": hasattr(os.stat_result, "st_uid"),
             "mount_information": Path("/proc/mounts").exists(),
             "archives": ["zip", "tar", "tar.gz", "tar.bz2", "tar.xz"],
+            "snapshots": True,
+            "transactions": True,
+            "incremental_backups": True,
+            "storage_analysis": True,
+            "recovery_history": True,
             "safety_mode": self.safety_mode,
         }
 
-    # ------------------------------------------------------------------
-    # Android experimental storage
-    # ------------------------------------------------------------------
+    # Android -----------------------------------------------------------
     def android_hidden_storage(self) -> Path | None:
-        if not self.android:
-            return None
-        return self.hidden.android_hidden_storage
+        return self.hidden.android_hidden_storage if self.android else None
 
     def android_storage_roots(self) -> list[Path]:
-        """Return likely Android shared-storage roots that actually exist."""
-        candidates = [
-            os.environ.get("EXTERNAL_STORAGE"),
-            "/storage/emulated/0",
-            "/storage/self/primary",
-            "/sdcard",
-        ]
+        candidates = [os.environ.get("EXTERNAL_STORAGE"), "/storage/emulated/0", "/storage/self/primary", "/sdcard"]
         result: list[Path] = []
         for value in candidates:
             if value:
@@ -117,20 +117,17 @@ class Experimental:
         }
         if roots:
             usage = shutil.disk_usage(roots[0])
-            info["total"] = usage.total
-            info["used"] = usage.used
-            info["free"] = usage.free
+            info.update(total=usage.total, used=usage.used, free=usage.free)
         return info
 
     def android_media_storage(self) -> dict[str, Path]:
-        root = self.android_storage_roots()[0] if self.android_storage_roots() else None
-        if root is None:
+        roots = self.android_storage_roots()
+        if not roots:
             return {}
+        root = roots[0]
         return {name: root / name for name in ("DCIM", "Pictures", "Movies", "Music", "Download", "Documents") if (root / name).exists()}
 
-    # ------------------------------------------------------------------
-    # Hidden storage gateway
-    # ------------------------------------------------------------------
+    # Hidden gateway ----------------------------------------------------
     def verify_hidden(self, path: str | Path) -> bool:
         return self.hidden.verify_hidden(path)
 
@@ -152,9 +149,7 @@ class Experimental:
     def explorer(self) -> HiddenFileExplorer:
         return self.hidden_explorer
 
-    # ------------------------------------------------------------------
-    # Safe path and metadata utilities
-    # ------------------------------------------------------------------
+    # Path / metadata ---------------------------------------------------
     def _path(self, value: str | Path, *, allow_root: bool = True) -> Path:
         candidate = Path(value).expanduser()
         path = (self.base_path / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
@@ -172,12 +167,10 @@ class Experimental:
         mime, encoding = mimetypes.guess_type(target.name)
         result: dict[str, Any] = {
             "path": str(target), "name": target.name, "size": st.st_size,
-            "created": getattr(st, "st_birthtime", st.st_ctime),
-            "modified": st.st_mtime, "accessed": st.st_atime,
+            "created": getattr(st, "st_birthtime", st.st_ctime), "modified": st.st_mtime, "accessed": st.st_atime,
             "mode": stat.S_IMODE(st.st_mode), "mode_octal": oct(stat.S_IMODE(st.st_mode)),
-            "readable": os.access(target, os.R_OK), "writable": os.access(target, os.W_OK),
-            "executable": os.access(target, os.X_OK), "is_file": target.is_file(),
-            "is_directory": target.is_dir(), "is_symlink": target.is_symlink(),
+            "readable": os.access(target, os.R_OK), "writable": os.access(target, os.W_OK), "executable": os.access(target, os.X_OK),
+            "is_file": target.is_file(), "is_directory": target.is_dir(), "is_symlink": target.is_symlink(),
             "mime_type": mime, "encoding": encoding,
         }
         if hasattr(st, "st_uid"):
@@ -187,8 +180,7 @@ class Experimental:
         return result
 
     def owner_information(self, path: str | Path) -> dict[str, Any]:
-        target = self._path(path)
-        st = target.stat()
+        st = self._path(path).stat()
         result: dict[str, Any] = {"uid": getattr(st, "st_uid", None), "gid": getattr(st, "st_gid", None)}
         try:
             import grp
@@ -201,21 +193,22 @@ class Experimental:
             pass
         return result
 
-    def file_identity(self, path: str | Path) -> dict[str, Any]:
-        target = self._path(path)
-        st = target.stat()
-        digest = self.hash_file(target)
-        return {"path": str(target), "size": st.st_size, "sha256": digest, "device": getattr(st, "st_dev", None), "inode": getattr(st, "st_ino", None)}
-
     def hash_file(self, path: str | Path, algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:
-        target = self._path(path)
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
         digest = hashlib.new(algorithm)
-        with target.open("rb") as handle:
+        with self._path(path).open("rb") as handle:
             for chunk in iter(lambda: handle.read(chunk_size), b""):
                 digest.update(chunk)
         return digest.hexdigest()
+
+    def file_identity(self, path: str | Path) -> dict[str, Any]:
+        target = self._path(path)
+        st = target.stat()
+        return {"path": str(target), "size": st.st_size, "sha256": self.hash_file(target), "device": getattr(st, "st_dev", None), "inode": getattr(st, "st_ino", None)}
+
+    def file_signature(self, path: str | Path, algorithm: str = "sha256") -> str:
+        return self.hash_file(path, algorithm)
 
     def verify_integrity(self, path: str | Path, expected: str, algorithm: str = "sha256") -> bool:
         return self.hash_file(path, algorithm).lower() == expected.lower()
@@ -224,15 +217,12 @@ class Experimental:
         try:
             return os.path.samefile(self._path(left), self._path(right))
         except (FileNotFoundError, OSError):
-            return self.file_identity(left)["sha256"] == self.file_identity(right)["sha256"]
+            return self.file_signature(left) == self.file_signature(right)
 
-    # ------------------------------------------------------------------
-    # Advanced search and storage analysis
-    # ------------------------------------------------------------------
+    # Search / storage analysis ----------------------------------------
     def search_advanced(self, query: str = "", path: str | Path = ".", *, extension: str | None = None,
                         minimum_size: int | None = None, maximum_size: int | None = None,
-                        files_only: bool = False, folders_only: bool = False,
-                        case_sensitive: bool = False) -> list[Path]:
+                        files_only: bool = False, folders_only: bool = False, case_sensitive: bool = False) -> list[Path]:
         root = self._path(path)
         needle = query if case_sensitive else query.lower()
         ext = None if extension is None else (extension if extension.startswith(".") else "." + extension).lower()
@@ -262,9 +252,8 @@ class Experimental:
     def duplicates(self, path: str | Path = ".") -> list[list[Path]]:
         groups: dict[tuple[int, str], list[Path]] = {}
         for item in self._path(path).rglob("*"):
-            if item.is_file() and not any(part.startswith(".") for part in item.relative_to(self.base_path).parts):
-                key = (item.stat().st_size, self.hash_file(item))
-                groups.setdefault(key, []).append(item)
+            if item.is_file() and not any(x.startswith(".") for x in item.relative_to(self.base_path).parts):
+                groups.setdefault((item.stat().st_size, self.hash_file(item)), []).append(item)
         return [items for items in groups.values() if len(items) > 1]
 
     def storage_analysis(self, path: str | Path = ".") -> dict[str, Any]:
@@ -276,7 +265,8 @@ class Experimental:
         for item in files:
             size = item.stat().st_size
             total += size
-            extensions[item.suffix.lower() or "[no extension]"] = extensions.get(item.suffix.lower() or "[no extension]", 0) + size
+            key = item.suffix.lower() or "[no extension]"
+            extensions[key] = extensions.get(key, 0) + size
         largest = sorted(files, key=lambda p: p.stat().st_size, reverse=True)[:20]
         return {"files": len(files), "folders": len(folders), "total_size": total,
                 "largest": [{"path": str(p), "size": p.stat().st_size} for p in largest],
@@ -298,6 +288,7 @@ class Experimental:
     def cleanup_empty_folders(self, path: str | Path = ".", *, dry_run: bool = True) -> list[Path]:
         targets = sorted(self.find_empty_folders(path), key=lambda p: len(p.parts), reverse=True)
         if not dry_run:
+            self.require_destructive_access()
             for target in targets:
                 try:
                     target.rmdir()
@@ -305,8 +296,7 @@ class Experimental:
                     pass
         return targets
 
-    def cleanup_preview(self, path: str | Path = ".", *, older_than_days: float | None = None,
-                        minimum_size: int | None = None) -> list[Path]:
+    def cleanup_preview(self, path: str | Path = ".", *, older_than_days: float | None = None, minimum_size: int | None = None) -> list[Path]:
         result: set[Path] = set(self.find_empty_files(path))
         if older_than_days is not None:
             result.update(self.find_old_files(older_than_days, path))
@@ -314,9 +304,7 @@ class Experimental:
             result.update(self.find_large_files(minimum_size, path))
         return sorted(result, key=lambda p: str(p).lower())
 
-    # ------------------------------------------------------------------
-    # Permissions, links, and deletion
-    # ------------------------------------------------------------------
+    # Permissions / links / secure deletion ----------------------------
     def set_mode(self, path: str | Path, mode: int | str) -> Path:
         target = self._path(path, allow_root=False)
         numeric = int(str(mode), 8) if isinstance(mode, str) else mode
@@ -333,7 +321,8 @@ class Experimental:
         return not os.access(self._path(path), os.W_OK)
 
     def secure_delete(self, path: str | Path, *, passes: int = 1) -> Path:
-        """Best-effort overwrite before deletion; flash storage may retain old blocks."""
+        """Best-effort overwrite; flash storage may retain old physical blocks."""
+        self.require_destructive_access()
         if passes < 1:
             raise ValueError("passes must be at least 1")
         target = self._path(path, allow_root=False)
@@ -374,9 +363,7 @@ class Experimental:
     def resolve_link(self, path: str | Path) -> Path:
         return self._path(path).resolve()
 
-    # ------------------------------------------------------------------
-    # Streaming and progress operations
-    # ------------------------------------------------------------------
+    # Streaming ---------------------------------------------------------
     def read_chunks(self, path: str | Path, chunk_size: int = 1024 * 1024) -> Iterator[bytes]:
         if chunk_size <= 0:
             raise ValueError("chunk_size must be positive")
@@ -398,6 +385,8 @@ class Experimental:
         return target
 
     def copy_with_progress(self, source: str | Path, destination: str | Path, chunk_size: int = 1024 * 1024) -> Iterator[dict[str, Any]]:
+        if chunk_size <= 0:
+            raise ValueError("chunk_size must be positive")
         src = self._path(source)
         dst = self._path(destination, allow_root=False)
         if src.is_dir():
@@ -415,9 +404,7 @@ class Experimental:
                 yield {"copied": copied, "total": total, "percent": 100.0 if total == 0 else copied * 100.0 / total, "path": str(dst)}
         shutil.copystat(src, dst, follow_symlinks=True)
 
-    # ------------------------------------------------------------------
-    # Archive engine
-    # ------------------------------------------------------------------
+    # Archives ----------------------------------------------------------
     def archive_create(self, source: str | Path, archive: str | Path, format: str = "zip") -> Path:
         src = self._path(source)
         out = self._path(archive, allow_root=False)
@@ -468,16 +455,14 @@ class Experimental:
         target = self._path(archive)
         out = self._path(destination)
         out.mkdir(parents=True, exist_ok=True)
+        root = out.resolve()
         if zipfile.is_zipfile(target):
             with zipfile.ZipFile(target) as zf:
-                root = out.resolve()
                 for name in zf.namelist():
-                    candidate = (out / name).resolve()
-                    candidate.relative_to(root)
+                    (out / name).resolve().relative_to(root)
                 zf.extractall(out)
         else:
             with tarfile.open(target, "r:*") as tf:
-                root = out.resolve()
                 for member in tf.getmembers():
                     (out / member.name).resolve().relative_to(root)
                 tf.extractall(out)
@@ -522,17 +507,30 @@ class Experimental:
             os.replace(temp_archive, target)
         return target
 
-    # ------------------------------------------------------------------
-    # Snapshots, backups, transactions, and recovery
-    # ------------------------------------------------------------------
+    def archive_update(self, archive: str | Path, *, add: str | Path | None = None, remove: list[str] | None = None) -> Path:
+        if add is not None:
+            self.archive_add(archive, add)
+        if remove:
+            self.archive_remove(archive, remove)
+        return self._path(archive)
+
+    # Snapshots / backups ----------------------------------------------
     def snapshot(self, path: str | Path = ".") -> dict[str, Any]:
         root = self._path(path)
         files: dict[str, Any] = {}
         for item in root.rglob("*"):
             if item.is_file() and not any(x.startswith(".") for x in item.relative_to(self.base_path).parts):
-                rel = str(item.relative_to(root))
-                files[rel] = {"size": item.stat().st_size, "sha256": self.hash_file(item), "mtime": item.stat().st_mtime}
+                files[str(item.relative_to(root))] = {"size": item.stat().st_size, "sha256": self.hash_file(item), "mtime": item.stat().st_mtime}
         return {"root": str(root), "created": time.time(), "files": files}
+
+    def snapshot_save(self, path: str | Path, destination: str | Path) -> Path:
+        target = self._path(destination, allow_root=False)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(json.dumps(self.snapshot(path), indent=2), encoding="utf-8")
+        return target
+
+    def snapshot_load(self, path: str | Path) -> dict[str, Any]:
+        return json.loads(self._path(path).read_text(encoding="utf-8"))
 
     def snapshot_compare(self, old: dict[str, Any], new: dict[str, Any]) -> dict[str, list[str]]:
         a, b = old.get("files", {}), new.get("files", {})
@@ -544,9 +542,12 @@ class Experimental:
     def restore_backup(self, archive: str | Path, destination: str | Path = ".") -> Path:
         return self.archive_extract(archive, destination)
 
+    def snapshot_restore(self, archive: str | Path, destination: str | Path = ".") -> Path:
+        """Restore a content backup; a metadata-only snapshot cannot recreate bytes."""
+        return self.restore_backup(archive, destination)
+
     def backup_incremental(self, source: str | Path, destination: str | Path) -> dict[str, Any]:
-        src = self._path(source)
-        dst = self._path(destination)
+        src, dst = self._path(source), self._path(destination)
         dst.mkdir(parents=True, exist_ok=True)
         manifest_path = dst / ".alera_incremental.json"
         old = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
@@ -555,8 +556,7 @@ class Experimental:
         for item in src.rglob("*"):
             if not item.is_file() or any(x.startswith(".") for x in item.relative_to(self.base_path).parts):
                 continue
-            rel = str(item.relative_to(src))
-            digest = self.hash_file(item)
+            rel, digest = str(item.relative_to(src)), self.hash_file(item)
             new[rel] = {"sha256": digest, "size": item.stat().st_size}
             if old.get(rel, {}).get("sha256") != digest:
                 target = dst / rel
@@ -568,12 +568,6 @@ class Experimental:
 
     @contextlib.contextmanager
     def transaction(self) -> Iterator["Experimental"]:
-        """Provide a rollback-capable workspace transaction.
-
-        The implementation snapshots the workspace into a temporary directory,
-        so it is safest for small/medium experimental workspaces rather than
-        multi-terabyte datasets.
-        """
         with tempfile.TemporaryDirectory(prefix="alera-transaction-") as temp:
             backup = Path(temp) / "workspace"
             backup.mkdir()
@@ -581,7 +575,7 @@ class Experimental:
                 if item.name in {".alera_bin", ".alera_hidden", ".alera_recovery_history.json"} or item.name.startswith(".alera_transaction"):
                     continue
                 destination = backup / item.name
-                if item.is_dir():
+                if item.is_dir() and not item.is_symlink():
                     shutil.copytree(item, destination, symlinks=True)
                 else:
                     shutil.copy2(item, destination, follow_symlinks=False)
@@ -597,12 +591,13 @@ class Experimental:
                         item.unlink(missing_ok=True)
                 for item in backup.iterdir():
                     destination = self.base_path / item.name
-                    if item.is_dir():
+                    if item.is_dir() and not item.is_symlink():
                         shutil.copytree(item, destination, symlinks=True)
                     else:
                         shutil.copy2(item, destination, follow_symlinks=False)
                 raise
 
+    # Recovery / device -------------------------------------------------
     def record_recovery_event(self, action: str, path: str | Path, **details: Any) -> dict[str, Any]:
         history = json.loads(self._history_path.read_text(encoding="utf-8")) if self._history_path.exists() else []
         event = {"timestamp": time.time(), "action": action, "path": str(path), **details}
@@ -611,13 +606,8 @@ class Experimental:
         return event
 
     def recovery_history(self) -> list[dict[str, Any]]:
-        if not self._history_path.exists():
-            return []
-        return json.loads(self._history_path.read_text(encoding="utf-8"))
+        return json.loads(self._history_path.read_text(encoding="utf-8")) if self._history_path.exists() else []
 
-    # ------------------------------------------------------------------
-    # Device, mounts, health, and developer utilities
-    # ------------------------------------------------------------------
     def mounts(self) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
         source = Path("/proc/mounts")
@@ -640,17 +630,17 @@ class Experimental:
         return sorted({item["filesystem"] for item in self.mounts()})
 
     def storage_information(self, path: str | Path = ".") -> dict[str, Any]:
-        usage = shutil.disk_usage(self._path(path))
-        return {"path": str(self._path(path)), "total": usage.total, "used": usage.used, "free": usage.free}
+        target = self._path(path)
+        usage = shutil.disk_usage(target)
+        return {"path": str(target), "total": usage.total, "used": usage.used, "free": usage.free}
 
     def health_check(self) -> dict[str, Any]:
-        root = self.base_path
-        report: dict[str, Any] = {"path": str(root), "exists": root.exists(), "readable": os.access(root, os.R_OK), "writable": os.access(root, os.W_OK)}
-        with tempfile.NamedTemporaryFile(dir=root, delete=True) as handle:
+        report: dict[str, Any] = {"path": str(self.base_path), "exists": self.base_path.exists(), "readable": os.access(self.base_path, os.R_OK), "writable": os.access(self.base_path, os.W_OK)}
+        with tempfile.NamedTemporaryFile(dir=self.base_path, delete=True) as handle:
             handle.write(b"alera-health")
             handle.flush()
             report["temporary_write"] = True
-        report["storage"] = self.storage_information(root)
+        report["storage"] = self.storage_information()
         report["android"] = self.android_storage_information() if self.android else None
         report["features"] = self.features()
         return report
