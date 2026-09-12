@@ -34,6 +34,7 @@ from .permissions import PermissionTools
 from .processes import ProcessManager
 from .recovery import RecoveryManager
 from .search_engine import SearchEngine
+from .search_index import SearchIndex
 from .security import FileSecurity
 from .snapshots import SnapshotManager
 from .storage import StorageAnalyzer
@@ -49,7 +50,7 @@ from .watcher import FileWatcher
 __all__ = [
     "Alera", "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
     "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools",
-    "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine", "StorageAnalyzer", "MetadataManager",
+    "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine", "SearchIndex", "StorageAnalyzer", "MetadataManager",
     "LinkManager", "BackupManager", "RecoveryManager", "HealthChecker", "FileTransaction", "FileSecurity",
     "MountManager", "AndroidStorage", "FileInspector", "VirtualFileSystem", "DiskManager", "EncryptionManager",
     "VersionManager", "SyncManager", "FileUtilities", "CleanupManager", "FileDatabase", "ProcessManager",
@@ -59,4 +60,4 @@ __all__ = [
     "restrictions", "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
