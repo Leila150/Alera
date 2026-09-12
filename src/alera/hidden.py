@@ -14,15 +14,16 @@ from typing import Iterable, Iterator
 class HiddenFiles:
     """Manage hidden files on Android shared storage and desktop systems.
 
-    Android keeps hidden data on shared internal storage instead of Python's
-    private application directory. Hidden objects are moved below a dot-
-    prefixed directory and receive unpredictable names. A small manifest maps
-    each original path back to its stored object.
+    Android stores hidden objects on shared internal storage, not Python's
+    private application directory. Objects are placed below a dot-prefixed
+    directory with unpredictable names, while a small manifest preserves the
+    original paths. This is substantially stronger than simply renaming a
+    visible file to ``.file``.
 
     Android has no universal hidden attribute for arbitrary shared-storage
     files. A file manager that deliberately reveals dot-prefixed directories
-    can still discover the storage directory; standard Python cannot override
-    that behavior.
+    can still discover Alera's hidden directory; standard Python cannot force
+    every third-party file manager to hide it.
     """
 
     _ANDROID_HIDDEN_DIR = ".alera_hidden"
@@ -87,12 +88,12 @@ class HiddenFiles:
             candidates.append(Path(external).expanduser())
         candidates.extend((Path("/storage/emulated/0"), Path("/sdcard")))
         parts = self.base_path.parts
-        try:
-            index = parts.index("storage")
-            if len(parts) > index + 3 and parts[index + 1] == "emulated" and parts[index + 3] == "":
-                candidates.insert(0, Path(*parts[: index + 3]))
-        except (ValueError, IndexError):
-            pass
+        for index, part in enumerate(parts):
+            if part == "storage" and len(parts) > index + 3 and parts[index + 1] == "emulated":
+                candidate = Path(*parts[: index + 3])
+                if candidate.name == "0":
+                    candidates.insert(0, candidate)
+                    break
         for candidate in candidates:
             try:
                 candidate = candidate.resolve()
