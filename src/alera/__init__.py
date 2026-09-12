@@ -9,6 +9,7 @@ from .directory import DirectoryTools
 from .environment import environment_variables, module_available, platform_information, python_information, restrictions
 from .exceptions import AleraBinError, AleraError, AleraPathError, AleraValidationError
 from .explorer import FileExplorer
+from .experimental import Experimental
 from .hidden import HiddenFiles
 from .hidden_explorer import HiddenFileExplorer
 from .locking import FileLock
@@ -20,7 +21,7 @@ from .temporary import TemporaryFiles
 from .watcher import FileWatcher
 
 __all__ = [
-    "FileExplorer", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
+    "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
     "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools",
     "PermissionTools", "SnapshotManager", "StreamTools", "FileWatcher",
     "AleraError", "AleraValidationError", "AleraPathError", "AleraBinError",
