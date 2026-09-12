@@ -14,25 +14,28 @@ from typing import Iterable, Iterator
 class HiddenFiles:
     """Manage hidden files/directories on Android, Linux, Windows, and macOS.
 
-    Android is handled differently from desktop systems. Android shared storage
-    does not provide a universal filesystem-level ``hidden`` attribute that
-    every file manager must respect. Therefore Alera moves Android-hidden
-    items into the Python application's private storage area and records their
-    original locations. This makes them inaccessible to ordinary Android file
-    managers instead of merely renaming them to ``.name``.
+    Android uses a shared-storage hidden directory rather than the application's
+    private storage. Hidden items keep their real contents on the same internal
+    shared-storage volume, while Alera removes them from their visible original
+    location and keeps a small restoration manifest in the hidden directory.
+
+    Android does not expose a universal filesystem hidden attribute for arbitrary
+    files, so this implementation combines a hidden parent directory, Android's
+    ``.nomedia`` convention, randomized storage names, and restrictive mode bits
+    where the filesystem permits them. File managers that deliberately reveal
+    hidden files can still expose the hidden directory; Android provides no
+    standard API that can universally override such file managers for arbitrary
+    non-media files.
     """
 
     def __init__(self, base_path: str | os.PathLike[str] = "") -> None:
         self.base_path = Path(base_path or Path.cwd()).expanduser().resolve()
         self.base_path.mkdir(parents=True, exist_ok=True)
-        self._android_vault = (Path.home() / ".alera_android_vault").resolve()
+        self._android_vault = self._android_vault_path()
         self._android_manifest = self._android_vault / "index.json"
         if self.platform == "android":
             self._android_vault.mkdir(parents=True, exist_ok=True)
-            self._android_vault.chmod(0o700)
-            if not self._android_manifest.exists():
-                self._android_manifest.write_text("{}", encoding="utf-8")
-                self._android_manifest.chmod(0o600)
+            self._protect_android_vault()
 
     @property
     def platform(self) -> str:
@@ -43,7 +46,6 @@ class HiddenFiles:
         if sys.platform == "darwin":
             return "macos"
         if sys.platform.startswith("linux"):
-            # Pydroid/Termux commonly report Linux while running on Android.
             if "ANDROID_ROOT" in os.environ or "ANDROID_DATA" in os.environ:
                 return "android"
             return "linux"
@@ -56,6 +58,41 @@ class HiddenFiles:
     @property
     def desktop(self) -> bool:
         return not self.mobile
+
+    def _android_vault_path(self) -> Path:
+        """Choose a hidden directory on shared internal storage when possible."""
+        parts = self.base_path.parts
+        try:
+            index = parts.index("storage")
+            if len(parts) > index + 3 and parts[index + 1] == "emulated":
+                root = Path(*parts[: index + 3])
+                if root.name == "0":
+                    return root / ".alera_hidden"
+        except ValueError:
+            pass
+        return self.base_path / ".alera_hidden"
+
+    def _protect_android_vault(self) -> None:
+        """Apply every practical standard-library hiding/protection mechanism."""
+        try:
+            self._android_vault.chmod(0o700)
+        except OSError:
+            pass
+
+        nomedia = self._android_vault / ".nomedia"
+        try:
+            if not nomedia.exists():
+                nomedia.write_bytes(b"")
+            nomedia.chmod(0o600)
+        except OSError:
+            pass
+
+        if not self._android_manifest.exists():
+            try:
+                self._android_manifest.write_text("{}", encoding="utf-8")
+                self._android_manifest.chmod(0o600)
+            except OSError:
+                pass
 
     def _path(self, path: str | os.PathLike[str]) -> Path:
         candidate = Path(path).expanduser()
@@ -78,12 +115,18 @@ class HiddenFiles:
             return {}
 
     def _save_android_manifest(self, data: dict[str, dict[str, str]]) -> None:
-        self._android_manifest.parent.mkdir(parents=True, exist_ok=True)
+        self._protect_android_vault()
         temporary = self._android_manifest.with_name(".index.tmp")
         temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        temporary.chmod(0o600)
+        try:
+            temporary.chmod(0o600)
+        except OSError:
+            pass
         os.replace(temporary, self._android_manifest)
-        self._android_manifest.chmod(0o600)
+        try:
+            self._android_manifest.chmod(0o600)
+        except OSError:
+            pass
 
     def _android_record(self, original: Path, vault: Path) -> None:
         data = self._load_android_manifest()
@@ -135,7 +178,7 @@ class HiddenFiles:
     def hidden_reason(self, path: str | os.PathLike[str]) -> str:
         item = self._path(path)
         if self.mobile and str(item) in self._load_android_manifest():
-            return "android_private_vault"
+            return "android_shared_hidden_storage"
         dot = self._dot_hidden(item)
         windows = self._windows_hidden(item)
         if dot and windows:
@@ -152,15 +195,17 @@ class HiddenFiles:
         if str(item) in self._load_android_manifest():
             return item
         if self._android_vault == item or self._android_vault in item.parents:
-            raise ValueError("cannot hide an item already inside the Android private vault")
+            raise ValueError("cannot hide an item already inside the Android hidden storage")
 
-        token = secrets.token_hex(16)
+        self._protect_android_vault()
+        token = secrets.token_hex(24)
         target = self._android_vault / token
         while target.exists():
-            target = self._android_vault / secrets.token_hex(16)
+            target = self._android_vault / secrets.token_hex(24)
+
         shutil.move(str(item), str(target))
         try:
-            target.chmod(0o700)
+            target.chmod(0o700 if target.is_dir() else 0o600)
         except OSError:
             pass
         self._android_record(item, target)
@@ -284,17 +329,14 @@ class HiddenFiles:
 
     def hidden_files(self, path: str | os.PathLike[str] = "", recursive: bool = False) -> list[Path]:
         if self.mobile:
-            return [p for p in self.list_hidden(path, recursive) if self._load_android_manifest().get(str(p), {}).get("vault")]
+            data = self._load_android_manifest()
+            return [p for p in self.list_hidden(path, recursive) if data.get(str(p), {}).get("vault") and Path(data[str(p)]["vault"]).is_file()]
         return [p for p in self.list_hidden(path, recursive) if p.is_file()]
 
     def hidden_folders(self, path: str | os.PathLike[str] = "", recursive: bool = False) -> list[Path]:
         if self.mobile:
-            result = []
-            for p in self.list_hidden(path, recursive):
-                vault = self._load_android_manifest().get(str(p), {}).get("vault")
-                if vault and Path(vault).is_dir():
-                    result.append(p)
-            return result
+            data = self._load_android_manifest()
+            return [p for p in self.list_hidden(path, recursive) if data.get(str(p), {}).get("vault") and Path(data[str(p)]["vault"]).is_dir()]
         return [p for p in self.list_hidden(path, recursive) if p.is_dir()]
 
     def visible_files(self, path: str | os.PathLike[str] = "", recursive: bool = False) -> list[Path]:
@@ -314,10 +356,7 @@ class HiddenFiles:
 
     def hide_all(self, path: str | os.PathLike[str] = "", recursive: bool = False) -> list[Path]:
         items = self.list_visible(path, recursive)
-        if self.mobile:
-            items.sort(key=lambda p: len(p.parts), reverse=True)
-        else:
-            items.sort(key=lambda p: len(p.parts), reverse=True)
+        items.sort(key=lambda p: len(p.parts), reverse=True)
         return [self.hide(p) for p in items]
 
     def unhide_all(self, path: str | os.PathLike[str] = "", recursive: bool = False) -> list[Path]:
@@ -332,7 +371,7 @@ class HiddenFiles:
         src = self._path(source)
         dst = self._path(destination)
         if self.mobile and str(src) in self._load_android_manifest():
-            raise ValueError("Android private-vault items must be unhidden before copying")
+            raise ValueError("Android hidden items must be unhidden before copying")
         dst.parent.mkdir(parents=True, exist_ok=True)
         if src.is_dir():
             shutil.copytree(src, dst)
@@ -360,6 +399,6 @@ class HiddenFiles:
         }
         if self.mobile:
             record = self._load_android_manifest().get(str(item))
-            data["android_private"] = record is not None
+            data["android_shared_storage"] = record is not None
             data["vault_path"] = record.get("vault") if record else None
         return data
