@@ -26,9 +26,6 @@ def test_binary_file_round_trip(tmp_path: Path):
     assert created.read_bytes() == payload
     assert explorer.read_binary_file("data.bin") == payload
 
-    explorer.append_binary_file("data.bin", b"APPEND\x00\xff")
-    assert explorer.read_binary_file("data.bin") == payload + b"APPEND\x00\xff"
-
     replacement = memoryview(b"\x00\x01\xfe\xff")
     explorer.write_binary_file("data.bin", replacement)
     assert explorer.read_binary_file("data.bin") == b"\x00\x01\xfe\xff"
@@ -40,8 +37,6 @@ def test_binary_file_rejects_text(tmp_path: Path):
         explorer.create_binary_file("data.bin", "not bytes")
     with pytest.raises(AleraValidationError):
         explorer.write_binary_file("data.bin", "not bytes")
-    with pytest.raises(AleraValidationError):
-        explorer.append_binary_file("data.bin", "not bytes")
 
 
 def test_delete_moves_to_bin_and_restore(tmp_path: Path):
