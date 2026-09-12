@@ -42,26 +42,31 @@ class FileDatabase:
                     relative = str(path.relative_to(self.base))
                     seen.add(relative)
                     row = db.execute("SELECT size, mtime_ns, sha256 FROM files WHERE path=?", (relative,)).fetchone()
-                    digest = row[2] if row and row[0] == stat.st_size and row[1] == stat.st_mtime_ns else (self._hash(path) if full_hash else "")
-                    if not digest:
+                    digest = row[2] if row and row[0] == stat.st_size and row[1] == stat.st_mtime_ns else ""
+                    if full_hash and not digest:
                         digest = self._hash(path)
                     db.execute("INSERT OR REPLACE INTO files(path,size,mtime_ns,sha256) VALUES(?,?,?,?)", (relative, stat.st_size, stat.st_mtime_ns, digest))
                     count += 1
                 except OSError:
                     continue
-            db.execute("DELETE FROM files WHERE path NOT IN ({})".format(",".join("?" for _ in seen)) if seen else "DELETE FROM files", tuple(seen))
+            if seen:
+                placeholders = ",".join("?" for _ in seen)
+                db.execute(f"DELETE FROM files WHERE path NOT IN ({placeholders})", tuple(seen))
+            else:
+                db.execute("DELETE FROM files")
             db.commit()
         return count
 
     def search(self, pattern: str) -> list[dict]:
+        escaped = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         with sqlite3.connect(self.database) as db:
             db.row_factory = sqlite3.Row
-            rows = db.execute("SELECT path,size,mtime_ns,sha256 FROM files WHERE path LIKE ? ESCAPE '\\' ORDER BY path", (f"%{pattern.replace('%', r'\%').replace('_', r'\_')}%",)).fetchall()
+            rows = db.execute("SELECT path,size,mtime_ns,sha256 FROM files WHERE path LIKE ? ESCAPE '\\' ORDER BY path", (f"%{escaped}%",)).fetchall()
             return [dict(row) for row in rows]
 
     def duplicates(self) -> list[list[str]]:
         with sqlite3.connect(self.database) as db:
-            rows = db.execute("SELECT sha256, GROUP_CONCAT(path, char(10)) FROM files GROUP BY sha256 HAVING COUNT(*) > 1").fetchall()
+            rows = db.execute("SELECT sha256, GROUP_CONCAT(path, char(10)) FROM files WHERE sha256 != '' GROUP BY sha256 HAVING COUNT(*) > 1").fetchall()
         return [str(paths).split("\n") for _, paths in rows]
 
     def information(self) -> dict:
