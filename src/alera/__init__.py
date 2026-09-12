@@ -1,6 +1,8 @@
 """Alera: a powerful Python filesystem and system toolkit."""
 
+from .analysis import FileAnalysis
 from .archive import ArchiveManager
+from .atomic import AtomicFiles
 from .device import cpu_information, gpu_available, gpu_information, ram_information, spec_information, storage_information
 from .environment import environment_variables, module_available, platform_information, python_information, restrictions
 from .exceptions import AleraBinError, AleraError, AleraPathError, AleraValidationError
@@ -11,6 +13,8 @@ __all__ = [
     "FileExplorer",
     "TemporaryFiles",
     "ArchiveManager",
+    "FileAnalysis",
+    "AtomicFiles",
     "AleraError",
     "AleraValidationError",
     "AleraPathError",
