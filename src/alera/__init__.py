@@ -1,8 +1,10 @@
 """Alera: a powerful Python filesystem and system toolkit."""
 
 from .analysis import FileAnalysis
+from .android import AndroidStorage
 from .archive import ArchiveManager
 from .atomic import AtomicFiles
+from .backup import BackupManager
 from .cache import FileCache
 from .device import cpu_information, gpu_available, gpu_information, ram_information, spec_information, storage_information
 from .directory import DirectoryTools
@@ -10,20 +12,31 @@ from .environment import environment_variables, module_available, platform_infor
 from .exceptions import AleraBinError, AleraError, AleraPathError, AleraValidationError
 from .explorer import FileExplorer
 from .experimental import Experimental
+from .health import HealthChecker
 from .hidden import HiddenFiles
 from .hidden_explorer import HiddenFileExplorer
+from .links import LinkManager
 from .locking import FileLock
+from .metadata import MetadataManager
+from .mounts import MountManager
 from .paths import PathTools
 from .permissions import PermissionTools
+from .recovery import RecoveryManager
+from .search_engine import SearchEngine
+from .security import FileSecurity
 from .snapshots import SnapshotManager
+from .storage import StorageAnalyzer
 from .streams import StreamTools
 from .temporary import TemporaryFiles
+from .transactions import FileTransaction
 from .watcher import FileWatcher
 
 __all__ = [
     "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
     "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools",
-    "PermissionTools", "SnapshotManager", "StreamTools", "FileWatcher",
+    "PermissionTools", "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine",
+    "StorageAnalyzer", "MetadataManager", "LinkManager", "BackupManager", "RecoveryManager",
+    "HealthChecker", "FileTransaction", "FileSecurity", "MountManager", "AndroidStorage",
     "AleraError", "AleraValidationError", "AleraPathError", "AleraBinError",
     "cpu_information", "gpu_information", "gpu_available", "ram_information",
     "storage_information", "spec_information", "restrictions", "python_information",
