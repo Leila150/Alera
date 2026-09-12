@@ -10,6 +10,7 @@ from .cache import FileCache
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
 from .core import Alera
+from .database import FileDatabase
 from .device import cpu_information, gpu_available, gpu_information, ram_information, spec_information, storage_information
 from .directory import DirectoryTools
 from .disks import DiskManager
@@ -44,7 +45,6 @@ from .utilities import FileUtilities
 from .vfs import VirtualFileSystem
 from .versions import VersionManager
 from .watcher import FileWatcher
-from .database import FileDatabase
 
 __all__ = [
     "Alera", "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
@@ -59,4 +59,4 @@ __all__ = [
     "restrictions", "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
