@@ -11,3 +11,7 @@ class AleraValidationError(AleraError, ValueError):
 
 class AleraPathError(AleraError, OSError):
     """Raised when a path cannot be used safely."""
+
+
+class AleraBinError(AleraError, OSError):
+    """Raised when a recycle-bin operation cannot be completed."""
