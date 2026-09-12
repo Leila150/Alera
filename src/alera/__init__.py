@@ -6,6 +6,7 @@ from .android import AndroidStorage
 from .archive import ArchiveManager
 from .atomic import AtomicFiles
 from .backup import BackupManager
+from .binary import BinaryFileManager
 from .cache import FileCache
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
@@ -49,7 +50,7 @@ from .versions import VersionManager
 from .watcher import FileWatcher
 
 __all__ = [
-    "Alera", "FileExplorer", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
+    "Alera", "FileExplorer", "BinaryFileManager", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager",
     "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools",
     "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine", "SearchIndex", "StorageAnalyzer", "MetadataManager",
     "LinkManager", "BackupManager", "RecoveryManager", "HealthChecker", "FileTransaction", "FileSecurity", "RecycleBin",
