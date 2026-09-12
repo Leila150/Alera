@@ -8,18 +8,15 @@ import os
 import shutil
 import stat
 import tempfile
+import time
 from pathlib import Path
 from typing import Iterator
 
-from .exceptions import AleraPathError, AleraValidationError
+from .exceptions import AleraBinError, AleraPathError, AleraValidationError
 
 
 class FileExplorer:
-    """A safe, batteries-included filesystem helper.
-
-    ``base_path`` is optional. An empty value means the current working directory.
-    Every operation is restricted to the explorer root.
-    """
+    """A safe, batteries-included filesystem helper with a recycle bin."""
 
     def __init__(self, base_path: str | os.PathLike[str] = "") -> None:
         raw = Path(base_path).expanduser() if str(base_path) else Path.cwd()
@@ -28,6 +25,13 @@ class FileExplorer:
         except OSError as exc:
             raise AleraPathError(f"Unable to resolve base path: {raw}") from exc
         self.base_path.mkdir(parents=True, exist_ok=True)
+        self._bin_path = self.base_path / ".alera_bin"
+        self._bin_path.mkdir(exist_ok=True)
+
+    @property
+    def bin_path(self) -> Path:
+        """Return the internal recycle-bin path."""
+        return self._bin_path
 
     def _path(self, path: str | os.PathLike[str] | None, *, allow_root: bool = True) -> Path:
         if path is None or str(path) == "":
@@ -41,6 +45,8 @@ class FileExplorer:
             result.relative_to(self.base_path)
         except ValueError as exc:
             raise AleraPathError(f"Path escapes explorer base: {path}") from exc
+        if result == self._bin_path or self._bin_path in result.parents:
+            raise AleraPathError("The internal Alera bin cannot be manipulated as a normal path.")
         return result
 
     @staticmethod
@@ -154,11 +160,35 @@ class FileExplorer:
         dst.parent.mkdir(parents=True, exist_ok=True)
         return Path(shutil.move(str(src), str(dst)))
 
-    def delete(self, name: str | os.PathLike[str]) -> Path:
-        """Permanently delete one file or directory, recursively when needed.
+    def _bin_destination(self, source: Path) -> Path:
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        candidate = self._bin_path / f"{stamp}_{source.name}"
+        counter = 1
+        while candidate.exists():
+            candidate = self._bin_path / f"{stamp}_{counter}_{source.name}"
+            counter += 1
+        return candidate
 
-        There is no recycle bin, trash directory, backup copy, or restore operation.
-        """
+    def delete(self, name: str | os.PathLike[str]) -> Path:
+        """Move one file or directory to Alera's recycle bin."""
+        name = self._require_single(name)
+        source = self._path(name, allow_root=False)
+        if not source.exists():
+            raise FileNotFoundError(source)
+        destination = self._bin_destination(source)
+        try:
+            shutil.move(str(source), str(destination))
+        except OSError as exc:
+            raise AleraBinError(f"Could not move {source} to the Alera bin.") from exc
+        return destination
+
+    def deletes(self, names: list[str | os.PathLike[str]]) -> list[Path]:
+        """Move every item in the required list to the recycle bin."""
+        self._require_list(names)
+        return [self.delete(name) for name in names]
+
+    def perm_delete(self, name: str | os.PathLike[str]) -> Path:
+        """Permanently delete one file or directory, recursively when needed."""
         name = self._require_single(name)
         target = self._path(name, allow_root=False)
         if not target.exists():
@@ -172,10 +202,67 @@ class FileExplorer:
             raise OSError(f"Could not permanently delete {target}.") from exc
         return target
 
-    def deletes(self, names: list[str | os.PathLike[str]]) -> list[Path]:
+    def perm_deletes(self, names: list[str | os.PathLike[str]]) -> list[Path]:
         """Permanently delete every item in a required list."""
         self._require_list(names)
-        return [self.delete(name) for name in names]
+        return [self.perm_delete(name) for name in names]
+
+    def list_bin(self) -> list[Path]:
+        return sorted(self._bin_path.iterdir(), key=lambda p: p.name.lower())
+
+    def bin_information(self) -> list[dict[str, object]]:
+        return [
+            {"name": item.name, "path": str(item), "type": "folder" if item.is_dir() else "file", "size": self._size(item)}
+            for item in self.list_bin()
+        ]
+
+    def _find_bin_item(self, name: str | os.PathLike[str]) -> Path:
+        self._require_single(name)
+        for item in self.list_bin():
+            if item.name == str(name):
+                return item
+        raise FileNotFoundError(name)
+
+    def restore(self, name: str | os.PathLike[str]) -> Path:
+        """Restore one item from the recycle bin."""
+        item = self._find_bin_item(name)
+        original_name = str(item.name).split("_", 2)[-1]
+        destination = self.base_path / original_name
+        if destination.exists():
+            stem, suffix = destination.stem, destination.suffix
+            index = 1
+            while destination.exists():
+                destination = self.base_path / f"{stem} (restored {index}){suffix}"
+                index += 1
+        return Path(shutil.move(str(item), str(destination)))
+
+    def spef_restore(self, names: list[str]) -> list[Path]:
+        self._require_list(names)
+        return [self.restore(name) for name in names]
+
+    def restore_bin(self) -> list[Path]:
+        return [self.restore(item.name) for item in list(self.list_bin())]
+
+    def bin_delete(self, name: str | os.PathLike[str]) -> None:
+        """Permanently delete one item already in the recycle bin."""
+        item = self._find_bin_item(name)
+        if item.is_dir():
+            shutil.rmtree(item)
+        else:
+            item.unlink()
+
+    def spef_delete(self, names: list[str]) -> None:
+        self._require_list(names)
+        for name in names:
+            self.bin_delete(name)
+
+    def clear_bin(self) -> None:
+        """Permanently empty the entire recycle bin."""
+        for item in self.list_bin():
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
 
     def list(self, path: str | os.PathLike[str] | None = None, *, include_hidden: bool = False) -> list[Path]:
         root = self._path(path)
@@ -197,6 +284,7 @@ class FileExplorer:
         root = self._path(path)
         for current, dirs, files in os.walk(root):
             current_path = Path(current)
+            dirs[:] = [d for d in dirs if d != ".alera_bin"]
             yield current_path, [current_path / d for d in dirs], [current_path / f for f in files]
 
     def tree(self, path: str | os.PathLike[str] | None = None, *, max_depth: int | None = None) -> str:
@@ -206,7 +294,7 @@ class FileExplorer:
         def visit(folder: Path, prefix: str, depth: int) -> None:
             if max_depth is not None and depth >= max_depth:
                 return
-            children = sorted((p for p in folder.iterdir() if not p.name.startswith(".")), key=lambda p: (p.is_file(), p.name.lower()))
+            children = sorted((p for p in folder.iterdir() if p != self._bin_path and not p.name.startswith(".")), key=lambda p: (p.is_file(), p.name.lower()))
             for index, child in enumerate(children):
                 last = index == len(children) - 1
                 lines.append(prefix + ("└── " if last else "├── ") + child.name)
@@ -223,6 +311,8 @@ class FileExplorer:
         needle = query if case_sensitive else query.lower()
         matches = []
         for item in root.rglob("*"):
+            if item == self._bin_path or self._bin_path in item.parents:
+                continue
             if files_only and not item.is_file():
                 continue
             haystack = item.name if case_sensitive else item.name.lower()
@@ -258,17 +348,7 @@ class FileExplorer:
     def metadata(self, name: str | os.PathLike[str]) -> dict[str, object]:
         target = self._path(name)
         info = target.stat()
-        return {
-            "name": target.name,
-            "path": str(target),
-            "type": "folder" if target.is_dir() else "file",
-            "size": self._size(target),
-            "created": info.st_ctime,
-            "modified": info.st_mtime,
-            "accessed": info.st_atime,
-            "mode": stat.filemode(info.st_mode),
-            "readonly": not os.access(target, os.W_OK),
-        }
+        return {"name": target.name, "path": str(target), "type": "folder" if target.is_dir() else "file", "size": self._size(target), "created": info.st_ctime, "modified": info.st_mtime, "accessed": info.st_atime, "mode": stat.filemode(info.st_mode), "readonly": not os.access(target, os.W_OK)}
 
     def json_metadata(self, name: str | os.PathLike[str]) -> str:
         return json.dumps(self.metadata(name), indent=2)
@@ -299,17 +379,7 @@ class FileExplorer:
 
     def permissions(self, name: str | os.PathLike[str]) -> dict[str, bool]:
         mode = self._path(name).stat().st_mode
-        return {
-            "owner_read": bool(mode & stat.S_IRUSR),
-            "owner_write": bool(mode & stat.S_IWUSR),
-            "owner_execute": bool(mode & stat.S_IXUSR),
-            "group_read": bool(mode & stat.S_IRGRP),
-            "group_write": bool(mode & stat.S_IWGRP),
-            "group_execute": bool(mode & stat.S_IXGRP),
-            "other_read": bool(mode & stat.S_IROTH),
-            "other_write": bool(mode & stat.S_IWOTH),
-            "other_execute": bool(mode & stat.S_IXOTH),
-        }
+        return {"owner_read": bool(mode & stat.S_IRUSR), "owner_write": bool(mode & stat.S_IWUSR), "owner_execute": bool(mode & stat.S_IXUSR), "group_read": bool(mode & stat.S_IRGRP), "group_write": bool(mode & stat.S_IWGRP), "group_execute": bool(mode & stat.S_IXGRP), "other_read": bool(mode & stat.S_IROTH), "other_write": bool(mode & stat.S_IWOTH), "other_execute": bool(mode & stat.S_IXOTH)}
 
     def set_readonly(self, name: str | os.PathLike[str], readonly: bool = True) -> Path:
         target = self._path(name)
