@@ -19,6 +19,7 @@ from .metadata import MetadataManager
 from .network import NetworkManager
 from .permissions import PermissionTools
 from .processes import ProcessManager
+from .recycle_bin import RecycleBin
 from .search_engine import SearchEngine
 from .security import FileSecurity
 from .storage import StorageAnalyzer
@@ -36,6 +37,7 @@ class Alera:
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
         self.files = FileExplorer(self.base_path)
+        self.bin = RecycleBin(self.base_path)
         self.search = SearchEngine(self.base_path)
         self.inspector = FileInspector(self.base_path)
         self.hidden = HiddenFiles(self.base_path)
@@ -63,18 +65,11 @@ class Alera:
         self.watcher = FileWatcher(self.base_path)
 
     def information(self) -> dict:
-        services = {
-            name: type(value).__name__
-            for name, value in vars(self).items()
-            if name != "base_path" and not name.startswith("_")
-        }
+        services = {name: type(value).__name__ for name, value in vars(self).items() if name != "base_path" and not name.startswith("_")}
         return {"base_path": str(self.files.base_path), "services": services}
 
     def service(self, name: str):
         """Return a service by attribute name."""
-        if not name or name.startswith("_"):
-            raise ValueError("Invalid service name")
-        try:
-            return getattr(self, name)
-        except AttributeError as exc:
-            raise KeyError(name) from exc
+        if not name or name.startswith("_"): raise ValueError("Invalid service name")
+        try: return getattr(self, name)
+        except AttributeError as exc: raise KeyError(name) from exc
