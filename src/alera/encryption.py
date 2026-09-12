@@ -1,4 +1,4 @@
-"""Optional-dependency-free authenticated file encryption using the stdlib."""
+"""Portable authenticated file encryption."""
 
 from __future__ import annotations
 
@@ -9,10 +9,10 @@ from pathlib import Path
 
 
 class EncryptionManager:
-    """Encrypt files with a password using a SHA-256 based keystream and MAC.
+    """Encrypt files with password-derived authenticated encryption primitives.
 
-    This is intended as a portable Alera format. For high-value secrets, a
-    dedicated audited cryptography library should still be preferred.
+    The format is portable and dependency-free. For high-value secrets, an
+    audited cryptography library remains preferable.
     """
 
     MAGIC = b"ALERAENC1"
@@ -33,11 +33,11 @@ class EncryptionManager:
     @staticmethod
     def _crypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
         output = bytearray()
-        counter = 0
-        for offset in range(0, len(data), 64):
-            block = hashlib.sha256(key + nonce + counter.to_bytes(8, "big")).digest()
-            output.extend(a ^ b for a, b in zip(data[offset:offset + 64], block))
-            counter += 1
+        for counter, offset in enumerate(range(0, len(data), 64)):
+            block = hashlib.sha256(key + nonce + counter.to_bytes(8, "big") + b"0").digest()
+            block += hashlib.sha256(key + nonce + counter.to_bytes(8, "big") + b"1").digest()
+            chunk = data[offset:offset + 64]
+            output.extend(a ^ b for a, b in zip(chunk, block))
         return bytes(output)
 
     def encrypt(self, source: str | Path, destination: str | Path, password: str) -> Path:
@@ -53,9 +53,10 @@ class EncryptionManager:
 
     def decrypt(self, source: str | Path, destination: str | Path, password: str) -> Path:
         raw = self._path(source).read_bytes()
-        if not raw.startswith(self.MAGIC) or len(raw) < len(self.MAGIC) + 64:
+        header = len(self.MAGIC)
+        if not raw.startswith(self.MAGIC) or len(raw) < header + 64:
             raise ValueError("Invalid Alera encrypted file")
-        pos = len(self.MAGIC)
+        pos = header
         salt, nonce, tag = raw[pos:pos + 16], raw[pos + 16:pos + 32], raw[pos + 32:pos + 64]
         cipher = raw[pos + 64:]
         key = self._derive(password, salt)
@@ -68,4 +69,6 @@ class EncryptionManager:
         return target
 
     def generate_key(self, length: int = 32) -> str:
+        if length <= 0:
+            raise ValueError("length must be positive")
         return os.urandom(length).hex()
