@@ -17,23 +17,31 @@ def test_create_read_and_write(tmp_path: Path):
     assert explorer.read_file("docs/a.txt") == "updated"
 
 
-def test_delete_restore(tmp_path: Path):
+def test_delete_is_permanent(tmp_path: Path):
     explorer = FileExplorer(tmp_path)
     explorer.create_file("a.txt", "hello")
     deleted = explorer.delete("a.txt")
-    assert not (tmp_path / "a.txt").exists()
-    assert deleted.exists()
-    restored = explorer.restore(deleted.name)
-    assert restored.exists()
-    assert restored.read_text() == "hello"
-
-
-def test_permanent_bin_delete(tmp_path: Path):
-    explorer = FileExplorer(tmp_path)
-    explorer.create_file("a.txt", "hello")
-    deleted = explorer.delete("a.txt")
-    explorer.bin_delete(deleted.name)
+    assert deleted == tmp_path / "a.txt"
     assert not deleted.exists()
+    assert not (tmp_path / ".alera_bin").exists()
+
+
+def test_recursive_permanent_delete(tmp_path: Path):
+    explorer = FileExplorer(tmp_path)
+    explorer.create_folder("one/two")
+    explorer.create_file("one/two/example.py", "print('ok')")
+    explorer.delete("one")
+    assert not (tmp_path / "one").exists()
+
+
+def test_multiple_permanent_delete(tmp_path: Path):
+    explorer = FileExplorer(tmp_path)
+    explorer.create_file("a.txt", "a")
+    explorer.create_file("b.txt", "b")
+    deleted = explorer.deletes(["a.txt", "b.txt"])
+    assert deleted == [tmp_path / "a.txt", tmp_path / "b.txt"]
+    assert not (tmp_path / "a.txt").exists()
+    assert not (tmp_path / "b.txt").exists()
 
 
 def test_recursive_search_and_tree(tmp_path: Path):
