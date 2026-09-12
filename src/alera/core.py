@@ -5,6 +5,7 @@ from __future__ import annotations
 from .analytics import FilesystemAnalytics
 from .android import AndroidStorage
 from .backup import BackupManager
+from .binary import BinaryFileManager
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
 from .database import FileDatabase
@@ -37,6 +38,7 @@ class Alera:
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
         self.files = FileExplorer(self.base_path)
+        self.binary = BinaryFileManager(self.base_path)
         self.bin = RecycleBin(self.base_path)
         self.search = SearchEngine(self.base_path)
         self.inspector = FileInspector(self.base_path)
