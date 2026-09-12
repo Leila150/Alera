@@ -4,9 +4,11 @@ from .device import cpu_information, gpu_available, gpu_information, ram_informa
 from .environment import environment_variables, module_available, platform_information, python_information, restrictions
 from .exceptions import AleraBinError, AleraError, AleraPathError, AleraValidationError
 from .explorer import FileExplorer
+from .temporary import TemporaryFiles
 
 __all__ = [
     "FileExplorer",
+    "TemporaryFiles",
     "AleraError",
     "AleraValidationError",
     "AleraPathError",
