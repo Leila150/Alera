@@ -1,8 +1,4 @@
-"""Centralized internal storage for Alera.
-
-Alera keeps its runtime metadata, indexes, caches, recovery data and other
-implementation state under one hidden ``.alera`` directory per workspace.
-"""
+"""Centralized private storage for Alera."""
 from __future__ import annotations
 
 import json
@@ -15,22 +11,18 @@ from typing import Iterator
 
 
 class AleraStorage:
-    """Manage Alera's private workspace directory and its subsystems."""
+    """Manage Alera's single hidden runtime directory."""
 
     ROOT_NAME = ".alera"
     DIRECTORIES = (
         "bin", "hidden", "cache", "index", "database", "recovery", "versions",
         "snapshots", "transactions", "locks", "archives", "backups", "sync",
-        "watcher", "security", "temp", "search", "logs",
+        "watcher", "security", "temp", "search", "logs", "crash_logs",
     )
     LEGACY_MAP = {
-        ".alera_bin": "bin",
-        ".alera_hidden": "hidden",
-        ".alera_cache": "cache",
-        ".alera_index": "index",
-        ".alera_database": "database",
-        ".alera_recovery": "recovery",
-        ".alera_versions": "versions",
+        ".alera_bin": "bin", ".alera_hidden": "hidden", ".alera_cache": "cache",
+        ".alera_index": "index", ".alera_database": "database",
+        ".alera_recovery": "recovery", ".alera_versions": "versions",
     }
 
     def __init__(self, base_path: str | os.PathLike[str] = "", *, migrate_legacy: bool = True) -> None:
@@ -45,7 +37,6 @@ class AleraStorage:
             self.migrate_legacy()
 
     def path(self, name: str = "") -> Path:
-        """Return a validated path inside Alera's private directory."""
         target = (self.root / name).resolve()
         try:
             target.relative_to(self.root.resolve())
@@ -62,25 +53,18 @@ class AleraStorage:
         return target
 
     def migrate_legacy(self) -> dict[str, int]:
-        """Move supported legacy ``.alera_*`` stores into ``.alera`` once."""
         moved: dict[str, int] = {}
         for legacy_name, subsystem in self.LEGACY_MAP.items():
             source = self.base_path / legacy_name
             target = self.root / subsystem
-            if not source.exists() or source.resolve() == target.resolve():
+            count = 0
+            if not source.exists():
                 moved[subsystem] = 0
                 continue
-            count = 0
             try:
                 for child in list(source.iterdir()):
                     destination = target / child.name
                     if destination.exists():
-                        if child.is_dir() and destination.is_dir():
-                            for nested in child.iterdir():
-                                final = destination / nested.name
-                                if not final.exists():
-                                    shutil.move(str(nested), str(final))
-                                    count += 1
                         continue
                     shutil.move(str(child), str(destination))
                     count += 1
@@ -110,15 +94,9 @@ class AleraStorage:
                     except OSError:
                         pass
             counts[directory.name] = count
-        return {
-            "root": str(self.root),
-            "subsystems": list(self.DIRECTORIES),
-            "objects": counts,
-            "size": total,
-        }
+        return {"root": str(self.root), "subsystems": list(self.DIRECTORIES), "objects": counts, "size": total}
 
     def atomic_json_write(self, name: str, data: object) -> Path:
-        """Atomically write JSON metadata into ``.alera``."""
         target = self.path(name)
         target.parent.mkdir(parents=True, exist_ok=True)
         fd, temporary = tempfile.mkstemp(prefix=f".{target.name}.", dir=target.parent)
@@ -136,12 +114,9 @@ class AleraStorage:
         return target
 
     def marker(self, name: str, **data: object) -> Path:
-        """Write a small timestamped JSON marker for diagnostics/auditing."""
-        payload = {"time": time.time(), **data}
-        return self.atomic_json_write(f"logs/{name}.json", payload)
+        return self.atomic_json_write(f"logs/{name}.json", {"time": time.time(), **data})
 
     def clear(self, subsystem: str, *, keep: set[str] | None = None) -> int:
-        """Remove objects from one private subsystem without deleting the subsystem itself."""
         target = self.ensure(subsystem)
         keep = keep or set()
         removed = 0
