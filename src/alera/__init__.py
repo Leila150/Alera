@@ -39,6 +39,7 @@ from .permissions import PermissionTools
 from .processes import ProcessManager
 from .recovery import RecoveryManager
 from .recycle_bin import RecycleBin
+from .runtime import AleraRuntime
 from .search_engine import SearchEngine, SearchResult
 from .search_index import SearchIndex
 from .security import FileSecurity
@@ -54,7 +55,7 @@ from .versions import VersionManager
 from .watcher import FileWatcher
 
 __all__ = [
-    "Alera", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "HiddenConfig", "FileExplorer", "BinaryFileManager", "Experimental",
+    "Alera", "AleraRuntime", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "HiddenConfig", "FileExplorer", "BinaryFileManager", "Experimental",
     "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager", "FileAnalysis", "AtomicFiles",
     "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools", "SnapshotManager", "StreamTools",
     "FileWatcher", "SearchEngine", "SearchResult", "SearchIndex", "StorageAnalyzer", "MetadataManager", "LinkManager",
