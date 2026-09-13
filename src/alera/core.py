@@ -24,6 +24,7 @@ from .metadata import MetadataManager
 from .network import NetworkManager
 from .operations import OperationEngine
 from .permissions import PermissionTools
+from .power import enhance_instance
 from .processes import ProcessManager
 from .recycle_bin import RecycleBin
 from .runtime import AleraRuntime
@@ -73,7 +74,6 @@ class Alera:
         self._hidden_config.bind(lambda enabled, storage: self.hidden.configure(enabled=enabled, storage=storage))
         self.hidden.configure(enabled=self._hidden_config.enabled, storage=self._hidden_config.storage)
         self.experimental._hidden_config = self._hidden_config
-        self.experimental.hidden = self.hidden
 
         self.android = AndroidStorage()
         self.backup = BackupManager(self.base_path)
@@ -102,10 +102,13 @@ class Alera:
             if value is not self.operations and hasattr(value, "__dict__"):
                 try:
                     value.operations = self.operations
+                    enhance_instance(value)
                 except Exception:
                     pass
 
         self.runtime = AleraRuntime(self)
+        enhance_instance(self.runtime)
+        enhance_instance(self)
 
     @property
     def hidden_config(self) -> HiddenConfig:
@@ -113,11 +116,7 @@ class Alera:
         return self._hidden_config
 
     def information(self) -> dict:
-        services = {
-            name: type(value).__name__
-            for name, value in vars(self).items()
-            if name != "base_path" and not name.startswith("_")
-        }
+        services = {name: type(value).__name__ for name, value in vars(self).items() if name != "base_path" and not name.startswith("_")}
         return {
             "base_path": str(self.files.base_path),
             "internal": self.internal.information(),
@@ -129,8 +128,13 @@ class Alera:
             "services": services,
         }
 
-    def diagnostics(self, *, include_services: bool = True) -> dict:
-        return self.runtime.diagnostics(include_services=include_services)
+    def diagnostics(self, *, deep: bool = False) -> dict:
+        """Return a complete runtime diagnostic report."""
+        return self.runtime.diagnostics(include_services=True, deep=deep)
+
+    def close(self) -> None:
+        """Gracefully shut down runtime-owned resources."""
+        self.runtime.shutdown()
 
     def service(self, name: str):
         if not name or name.startswith("_"):
@@ -139,10 +143,6 @@ class Alera:
             return getattr(self, name)
         except AttributeError as exc:
             raise KeyError(name) from exc
-
-    def close(self) -> None:
-        """Gracefully stop runtime-owned hooks."""
-        self.runtime.shutdown()
 
     def __enter__(self) -> "Alera":
         return self
