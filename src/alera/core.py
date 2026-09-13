@@ -16,8 +16,10 @@ from .health import HealthChecker
 from .hidden import HiddenFiles
 from .inspector import FileInspector
 from .integrity import IntegrityManager
+from .internal import AleraStorage
 from .metadata import MetadataManager
 from .network import NetworkManager
+from .operations import OperationEngine
 from .permissions import PermissionTools
 from .processes import ProcessManager
 from .recycle_bin import RecycleBin
@@ -37,9 +39,11 @@ class Alera:
 
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
+        self.internal = AleraStorage(self.base_path)
+        self.operations = OperationEngine()
         self.files = FileExplorer(self.base_path)
-        # BinaryFileManager now merges its binary API into FileExplorer at import
-        # time. Keep ``a.binary`` as a compatibility alias to the same core object.
+        # BinaryFileManager merges its binary API into FileExplorer at import
+        # time. ``a.binary`` is therefore the exact same filesystem core.
         self.binary = self.files
         self.bin = RecycleBin(self.base_path)
         self.search = SearchEngine(self.base_path)
@@ -68,12 +72,33 @@ class Alera:
         self.analytics = FilesystemAnalytics(self.base_path)
         self.watcher = FileWatcher(self.base_path)
 
+        # Give every service access to one operation bus without forcing the
+        # individual service APIs to depend on one another.
+        for value in vars(self).values():
+            if value is not self.operations and hasattr(value, "__dict__"):
+                try:
+                    value.operations = self.operations
+                except Exception:
+                    pass
+
     def information(self) -> dict:
-        services = {name: type(value).__name__ for name, value in vars(self).items() if name != "base_path" and not name.startswith("_")}
-        return {"base_path": str(self.files.base_path), "services": services}
+        services = {
+            name: type(value).__name__
+            for name, value in vars(self).items()
+            if name != "base_path" and not name.startswith("_")
+        }
+        return {
+            "base_path": str(self.files.base_path),
+            "internal": self.internal.information(),
+            "operations": self.operations.statistics(),
+            "services": services,
+        }
 
     def service(self, name: str):
         """Return a service by attribute name."""
-        if not name or name.startswith("_"): raise ValueError("Invalid service name")
-        try: return getattr(self, name)
-        except AttributeError as exc: raise KeyError(name) from exc
+        if not name or name.startswith("_"):
+            raise ValueError("Invalid service name")
+        try:
+            return getattr(self, name)
+        except AttributeError as exc:
+            raise KeyError(name) from exc
