@@ -1,15 +1,55 @@
 from pathlib import Path
 
-from alera import AleraStorage, OperationEngine, VirtualFileSystem
+from alera import Alera, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem
 
 
 def test_internal_storage_creates_central_layout(tmp_path: Path):
     storage = AleraStorage(tmp_path)
     assert storage.root == tmp_path / ".alera"
     assert storage.path("bin").is_dir()
+    assert storage.path("hidden").is_dir()
     assert storage.path("index").is_dir()
     assert storage.path("database").is_dir()
     assert storage.path("recovery").is_dir()
+    assert storage.path("crash_logs").is_dir()
+
+
+def test_hidden_config_defaults_and_persistence(tmp_path: Path):
+    config = HiddenConfig(tmp_path / ".alera/config/experimental.json")
+    assert config.enabled is True
+    assert config.storage == "internal"
+    config.update(storage="android", enabled=False)
+    loaded = HiddenConfig(config.path).load()
+    assert loaded.enabled is False
+    assert loaded.storage == "android"
+    loaded.reset()
+    assert loaded.enabled is True
+    assert loaded.storage == "internal"
+
+
+def test_hidden_files_use_internal_vault_by_default(tmp_path: Path):
+    a = Alera(tmp_path)
+    created = a.hidden.create_hidden_file("secret.txt", "hidden")
+    assert created == tmp_path / "secret.txt"
+    assert not created.exists()
+    assert a.hidden.verify_hidden(created)
+    assert a.internal.path("hidden").is_dir()
+    assert len(a.hidden.list_hidden()) == 1
+    a.hidden.unhide(created)
+    assert created.read_text(encoding="utf-8") == "hidden"
+
+
+def test_hidden_config_live_disable(tmp_path: Path):
+    a = Alera(tmp_path)
+    assert a.hidden_config.enabled is True
+    a.hidden_config.update(enabled=False)
+    assert a.hidden.enabled is False
+    try:
+        a.hidden.list_hidden()
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("disabled hidden storage should reject operations")
 
 
 def test_operation_engine_history_and_listener():
