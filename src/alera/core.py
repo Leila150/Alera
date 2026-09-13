@@ -43,8 +43,7 @@ class Alera:
         self.operations = OperationEngine()
 
         self.files = FileExplorer(self.base_path)
-        # The filesystem core now treats .alera as protected internal storage
-        # and stores its recycle-bin data in the centralized bin subsystem.
+        # .alera is the single protected runtime namespace.
         self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
         self.files._bin_path = self.internal.path("bin")
         self.files._bin_path.mkdir(parents=True, exist_ok=True)
@@ -64,6 +63,9 @@ class Alera:
         self.search.INTERNAL = frozenset(set(self.search.INTERNAL) | {".alera"})
         self.inspector = FileInspector(self.base_path)
         self.hidden = HiddenFiles(self.base_path)
+        self.hidden._android_vault = self.internal.path("hidden")
+        self.hidden._android_manifest = self.hidden._android_vault / "index.json"
+        self.hidden._android_vault.mkdir(parents=True, exist_ok=True)
         self.android = AndroidStorage()
         self.backup = BackupManager(self.base_path)
         self.cleanup = CleanupManager(self.base_path)
