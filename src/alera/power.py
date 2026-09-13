@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import inspect
 import time
+from pathlib import Path
 from typing import Any, Callable
 
 
@@ -105,12 +106,19 @@ def _safe(self, callable_: Callable[..., Any], *args: Any, default: Any = None, 
         return default
 
 
-def _resource_path(self, name: str = ""):
-    from pathlib import Path
+def _resource_path(self, name: str = "") -> Path:
+    """Resolve a service resource while refusing workspace traversal."""
     base = getattr(self, "base_path", None)
     if base is None:
         raise AttributeError("service has no base_path")
-    return (Path(base) / name).resolve()
+    candidate = Path(name).expanduser() if name else Path(".")
+    target = (candidate if candidate.is_absolute() else Path(base) / candidate).resolve()
+    root = Path(base).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("resource path escapes service base_path") from exc
+    return target
 
 
 _METHODS = {"capabilities": _capabilities, "describe": _describe, "health": _health, "snapshot": _snapshot, "call": _call, "timed": _timed, "has": _has, "safe": _safe, "resource_path": _resource_path}
