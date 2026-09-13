@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from alera import Alera, AleraRuntime, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem, __version__
 
 
@@ -74,6 +76,7 @@ def test_runtime_diagnostics_and_lifecycle(tmp_path: Path):
     assert isinstance(a.runtime, AleraRuntime)
     assert "files" in a.runtime.services()
     assert "files" in a.runtime.capabilities()["services"]
+    assert a.runtime.paths()["bin"] == str(tmp_path / ".alera/bin")
     diagnostics = a.diagnostics(deep=True)
     assert diagnostics["version"] == "0.5.0"
     assert diagnostics["ok"] is True
@@ -99,7 +102,7 @@ def test_virtual_filesystem_max_operations(tmp_path: Path):
     assert (tmp_path / "export/docs/readme.txt").read_text() == "hello world"
 
 
-def test_universal_power_layer(tmp_path: Path):
+def test_universal_power_layer_and_safety(tmp_path: Path):
     a = Alera(tmp_path)
     for service in (a.files, a.search, a.bin, a.vfs, a.storage, a.network, a.runtime):
         assert callable(service.capabilities)
@@ -109,6 +112,9 @@ def test_universal_power_layer(tmp_path: Path):
         assert callable(service.timed)
         assert callable(service.safe)
         assert service.describe()["class"] == type(service).__name__
-    assert a.files.has("read")
+    assert a.files.has("read_file")
     assert a.files.timed("exists", "does-not-exist")["ok"] is True
+    assert a.files.resource_path("inside.txt") == tmp_path / "inside.txt"
+    with pytest.raises(ValueError):
+        a.files.resource_path("../outside.txt")
     a.close()
