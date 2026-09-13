@@ -6,14 +6,11 @@ import bz2
 import fnmatch
 import gzip
 import hashlib
-import io
 import lzma
 import os
 import shutil
-import struct
 import tarfile
 import tempfile
-import time
 import zipfile
 from pathlib import Path
 from typing import BinaryIO, Iterable, Iterator
@@ -22,13 +19,7 @@ from .exceptions import AleraPathError, AleraValidationError
 
 
 class ArchiveManager:
-    """A workspace-safe, multi-format archive manager.
-
-    Built-in: ZIP, TAR, TAR.GZ, TAR.BZ2, TAR.XZ, GZIP, BZIP2, XZ.
-    Optional: 7Z (py7zr), RAR (rarfile), Zstandard (zstandard), LZ4 (lz4),
-    and Brotli (brotli). ZIP-family extensions such as JAR/APK/WAR are
-    automatically treated as ZIP containers.
-    """
+    """Workspace-safe, multi-format archive and compression manager."""
 
     BUILTIN_FORMATS = {
         "zip", "jar", "apk", "war", "ear", "whl", "xpi", "crx",
@@ -41,14 +32,14 @@ class ArchiveManager:
         ".alera_cache/", ".alera_versions/",
     )
     MAGIC = {
-        "zip": (b"PK\\x03\\x04", b"PK\\x05\\x06", b"PK\\x07\\x08"),
-        "gzip": (b"\\x1f\\x8b",),
+        "zip": (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08"),
+        "gzip": (b"\x1f\x8b",),
         "bz2": (b"BZh",),
-        "xz": (b"\\xfd7zXZ\\x00",),
-        "7z": (b"7z\\xbc\\xaf\\x27\\x1c",),
-        "rar": (b"Rar!\\x1a\\x07",),
+        "xz": (b"\xfd7zXZ\x00",),
+        "7z": (b"7z\xbc\xaf\x27\x1c",),
+        "rar": (b"Rar!\x1a\x07",),
         "pdf": (b"%PDF-",),
-        "zstd": (b"\\x28\\xb5\\x2f\\xfd",),
+        "zstd": (b"\x28\xb5\x2f\xfd",),
     }
 
     def __init__(self, base_path: str | Path = "", *, max_members: int = 100_000,
@@ -85,35 +76,37 @@ class ArchiveManager:
             fmt = value.lower().strip().lstrip(".")
         elif path:
             name = path.name.lower()
-            for suffix, fmt in (
+            for suffix, detected in (
                 (".tar.gz", "tar.gz"), (".tar.bz2", "tar.bz2"), (".tar.xz", "tar.xz"),
                 (".tgz", "tar.gz"), (".tbz2", "tar.bz2"), (".tbz", "tar.bz2"), (".txz", "tar.xz"),
             ):
                 if name.endswith(suffix):
-                    return fmt
+                    return detected
             fmt = path.suffix.lower().lstrip(".")
         else:
             return ""
-        aliases = {
+        return {
             "tgz": "tar.gz", "gztar": "tar.gz", "tbz": "tar.bz2", "tbz2": "tar.bz2",
             "bztar": "tar.bz2", "txz": "tar.xz", "xztar": "tar.xz",
             "gzip": "gz", "bzip2": "bz2", "lzma": "xz",
-        }
-        return aliases.get(fmt, fmt)
+        }.get(fmt, fmt)
 
     @classmethod
     def supported_formats(cls) -> dict[str, str]:
-        """Return formats and whether their backend is built-in or optional."""
+        """Return supported formats and their backend requirements."""
         result = {name: "builtin" for name in sorted(cls.BUILTIN_FORMATS)}
-        result.update({"7z": "optional: py7zr", "rar": "optional: rarfile", "zst": "optional: zstandard", "lz4": "optional: lz4", "br": "optional: brotli"})
+        result.update({
+            "7z": "optional: py7zr", "rar": "optional: rarfile",
+            "zst": "optional: zstandard", "lz4": "optional: lz4", "br": "optional: brotli",
+        })
         return result
 
     @classmethod
     def detect_format(cls, archive: str | Path) -> str:
-        """Detect a container/compression format from magic bytes first, then extension."""
+        """Detect format using magic bytes before falling back to the filename."""
         path = Path(archive)
         with path.open("rb") as handle:
-            header = handle.read(16)
+            header = handle.read(32)
         for fmt, signatures in cls.MAGIC.items():
             if any(header.startswith(signature) for signature in signatures):
                 return {"gzip": "gz", "bz2": "bz2", "xz": "xz"}.get(fmt, fmt)
@@ -124,7 +117,7 @@ class ArchiveManager:
     @classmethod
     def _safe_member(cls, name: str) -> bool:
         normalized = name.replace("\\", "/")
-        if not normalized or normalized.startswith("/") or "\\x00" in normalized:
+        if not normalized or normalized.startswith("/") or "\x00" in normalized:
             return False
         parts = [part for part in normalized.split("/") if part not in ("", ".")]
         return ".." not in parts
@@ -181,7 +174,7 @@ class ArchiveManager:
     def create(self, archive: str | Path, sources: list[str | Path], format: str | None = None,
                compression_level: int | None = None, include: Iterable[str] | None = None,
                exclude: Iterable[str] | None = None, follow_symlinks: bool = False) -> Path:
-        """Create an archive from files/directories."""
+        """Create ZIP/TAR-family archives or standalone GZIP/BZIP2/XZ streams."""
         target = self._path(archive)
         target.parent.mkdir(parents=True, exist_ok=True)
         fmt = self._normalize_format(format, target)
@@ -201,7 +194,7 @@ class ArchiveManager:
                     elif path.is_file():
                         zf.write(path, name)
                     elif path.is_dir():
-                        zf.write(path, name + "/")
+                        zf.writestr(zipfile.ZipInfo(name.rstrip("/") + "/"), b"")
             return target
 
         if fmt in {"tar", "tar.gz", "tar.bz2", "tar.xz"}:
@@ -244,9 +237,11 @@ class ArchiveManager:
                 include: Iterable[str] | None = None, exclude: Iterable[str] | None = None,
                 max_members: int | None = None, max_total_size: int | None = None,
                 max_ratio: float | None = None, overwrite: bool = True) -> Path:
-        """Safely extract selected members with archive-bomb protections."""
+        """Safely extract selected members with traversal and bomb protections."""
         source = self._path(archive)
         target = self._path(destination)
+        if not source.is_file():
+            raise FileNotFoundError(source)
         target.mkdir(parents=True, exist_ok=True)
         limit = self.max_members if max_members is None else max_members
         size_limit = self.max_extract_size if max_total_size is None else max_total_size
@@ -280,8 +275,7 @@ class ArchiveManager:
                 infos = [m for m in tf.getmembers() if selected(m.name)]
                 self._validate_names((m.name for m in infos), target, limit)
                 total = sum(m.size for m in infos if m.isfile())
-                compressed = max(source.stat().st_size, 1)
-                self._check_limits(total, compressed, size_limit, ratio_limit)
+                self._check_limits(total, max(source.stat().st_size, 1), size_limit, ratio_limit)
                 for member in infos:
                     if member.issym() or member.islnk() or member.isdev() or member.isfifo():
                         raise AleraPathError(f"Refusing unsafe special archive member: {member.name}")
@@ -318,9 +312,9 @@ class ArchiveManager:
             except ImportError as exc:
                 raise AleraValidationError("7z extraction requires optional 'py7zr'.") from exc
             with py7zr.SevenZipFile(source, "r") as zf:
-                names = zf.getnames()
-                self._validate_names((n for n in names if selected(n)), target, limit)
-                zf.extractall(path=target)
+                names = [n for n in zf.getnames() if selected(n)]
+                self._validate_names(names, target, limit)
+                zf.extractall(path=target, targets=names)
             return target
 
         if fmt == "rar":
@@ -344,7 +338,7 @@ class ArchiveManager:
             raise AleraValidationError("Archive exceeds the configured compression-ratio safety limit.")
 
     def list_contents(self, archive: str | Path) -> list[str]:
-        """List members without extracting."""
+        """List archive members without extraction."""
         source = self._path(archive)
         if zipfile.is_zipfile(source):
             with zipfile.ZipFile(source) as zf:
@@ -372,7 +366,7 @@ class ArchiveManager:
         raise AleraValidationError(f"Unsupported archive: {source.name}")
 
     def iter_contents(self, archive: str | Path) -> Iterator[str]:
-        """Stream member names."""
+        """Stream member names without building a result list."""
         source = self._path(archive)
         if zipfile.is_zipfile(source):
             with zipfile.ZipFile(source) as zf:
@@ -387,48 +381,44 @@ class ArchiveManager:
         yield from self.list_contents(source)
 
     def open_member(self, archive: str | Path, member: str) -> BinaryIO:
-        """Open one archive member for reading without extracting it."""
+        """Open a member for streaming reads without extracting it."""
         source = self._path(archive)
         if not self._safe_member(member):
             raise AleraPathError(f"Unsafe archive member: {member}")
         if zipfile.is_zipfile(source):
-            zf = zipfile.ZipFile(source)
+            owner = zipfile.ZipFile(source)
             try:
-                stream = zf.open(member, "r")
+                stream = owner.open(member, "r")
             except Exception:
-                zf.close()
+                owner.close()
                 raise
-            return _ArchiveStream(stream, zf)
+            return _ArchiveStream(stream, owner)
         if tarfile.is_tarfile(source):
-            tf = tarfile.open(source)
-            item = tf.getmember(member)
-            stream = tf.extractfile(item)
+            owner = tarfile.open(source)
+            stream = owner.extractfile(owner.getmember(member))
             if stream is None:
-                tf.close()
+                owner.close()
                 raise IsADirectoryError(member)
-            return _ArchiveStream(stream, tf)
+            return _ArchiveStream(stream, owner)
         raise AleraValidationError("Direct member streaming is unavailable for this archive format.")
 
     def read_member(self, archive: str | Path, member: str, *, max_bytes: int | None = None) -> bytes:
-        """Read one member into memory, optionally bounded."""
         with self.open_member(archive, member) as stream:
             return stream.read() if max_bytes is None else stream.read(max_bytes)
 
     def extract_member(self, archive: str | Path, member: str, destination: str | Path = ".", *, overwrite: bool = True) -> Path:
-        """Extract exactly one member."""
         self.extract(archive, destination, members=[member], overwrite=overwrite, max_members=1)
         return self._path(destination) / member
 
     def search(self, archive: str | Path, pattern: str, *, case_sensitive: bool = False) -> list[str]:
-        """Search member names using glob matching."""
         names = self.list_contents(archive)
         if not case_sensitive:
             pattern = pattern.lower()
             return [name for name in names if fnmatch.fnmatch(name.lower(), pattern)]
         return [name for name in names if fnmatch.fnmatch(name, pattern)]
 
-    def search_content(self, archive: str | Path, needle: bytes | str, *, max_member_size: int = 64 * 1024 * 1024) -> list[str]:
-        """Search text/binary content inside archive members without extracting them."""
+    def search_content(self, archive: str | Path, needle: bytes | str,
+                       *, max_member_size: int = 64 * 1024 * 1024) -> list[str]:
         target = needle.encode() if isinstance(needle, str) else bytes(needle)
         if not target:
             raise AleraValidationError("needle cannot be empty.")
@@ -454,59 +444,54 @@ class ArchiveManager:
         return matches
 
     def member_information(self, archive: str | Path, member: str) -> dict[str, object]:
-        """Return metadata for a single member."""
         source = self._path(archive)
         if zipfile.is_zipfile(source):
             with zipfile.ZipFile(source) as zf:
                 i = zf.getinfo(member)
                 return {"name": i.filename, "size": i.file_size, "compressed_size": i.compress_size,
-                        "compression": i.compress_type, "crc32": i.CRC, "is_dir": i.is_dir(), "date_time": i.date_time,
-                        "encrypted": bool(i.flag_bits & 1)}
+                        "compression": i.compress_type, "crc32": i.CRC, "is_dir": i.is_dir(),
+                        "date_time": i.date_time, "encrypted": bool(i.flag_bits & 1)}
         if tarfile.is_tarfile(source):
             with tarfile.open(source) as tf:
                 m = tf.getmember(member)
                 return {"name": m.name, "size": m.size, "compressed_size": None, "mode": m.mode,
-                        "uid": m.uid, "gid": m.gid, "mtime": m.mtime, "is_dir": m.isdir(), "type": m.type.decode(errors="replace") if isinstance(m.type, bytes) else str(m.type)}
+                        "uid": m.uid, "gid": m.gid, "mtime": m.mtime, "is_dir": m.isdir()}
         raise AleraValidationError("Member metadata is unavailable for this format.")
 
     def test(self, archive: str | Path) -> dict[str, object]:
-        """Test archive integrity without extracting it."""
+        """Test archive integrity without writing extracted files."""
         source = self._path(archive)
         errors: list[str] = []
         members = 0
-        if zipfile.is_zipfile(source):
-            with zipfile.ZipFile(source) as zf:
-                bad = zf.testzip()
-                members = len(zf.infolist())
-                if bad:
-                    errors.append(f"Corrupt ZIP member: {bad}")
-        elif tarfile.is_tarfile(source):
-            try:
+        try:
+            if zipfile.is_zipfile(source):
+                with zipfile.ZipFile(source) as zf:
+                    bad = zf.testzip()
+                    members = len(zf.infolist())
+                    if bad:
+                        errors.append(f"Corrupt ZIP member: {bad}")
+            elif tarfile.is_tarfile(source):
                 with tarfile.open(source) as tf:
                     for member in tf:
                         members += 1
                         if member.isfile():
                             stream = tf.extractfile(member)
                             if stream is not None:
-                                while stream.read(1024 * 1024):
+                                for _ in iter(lambda: stream.read(1024 * 1024), b""):
                                     pass
                                 stream.close()
-            except (OSError, tarfile.TarError) as exc:
-                errors.append(str(exc))
-        elif self.detect_format(source) == "7z":
-            try:
+            elif self.detect_format(source) == "7z":
                 import py7zr  # type: ignore
                 with py7zr.SevenZipFile(source, "r") as zf:
                     members = len(zf.getnames())
                     zf.test()
-            except Exception as exc:
-                errors.append(str(exc))
-        else:
-            errors.append("Unsupported format or no integrity backend available.")
+            else:
+                errors.append("Unsupported format or no integrity backend available.")
+        except Exception as exc:
+            errors.append(str(exc))
         return {"valid": not errors, "members": members, "errors": errors}
 
     def hash(self, archive: str | Path, algorithm: str = "sha256", chunk_size: int = 1024 * 1024) -> str:
-        """Hash the archive bytes using streaming I/O."""
         if chunk_size < 1:
             raise AleraValidationError("chunk_size must be positive.")
         digest = hashlib.new(algorithm)
@@ -519,7 +504,7 @@ class ArchiveManager:
         return self.hash(archive, algorithm).lower() == expected.strip().lower()
 
     def information(self, archive: str | Path) -> dict[str, object]:
-        """Return detailed archive/container statistics."""
+        """Return detailed archive statistics and integrity information."""
         source = self._path(archive)
         stat = source.stat()
         fmt = self.detect_format(source)
@@ -531,7 +516,7 @@ class ArchiveManager:
         try:
             names = self.list_contents(source)
             result["members"] = len(names)
-            if fmt in {"zip", "jar", "apk", "war", "ear", "whl", "xpi", "crx"}:
+            if fmt in self.ZIP_ALIASES:
                 with zipfile.ZipFile(source) as zf:
                     uncompressed = sum(i.file_size for i in zf.infolist())
                     compressed = sum(i.compress_size for i in zf.infolist())
@@ -550,14 +535,15 @@ class ArchiveManager:
         return result
 
     def compare(self, first: str | Path, second: str | Path) -> dict[str, list[str]]:
-        """Compare two archives by member names and content hashes."""
+        """Compare two archives by member content hashes."""
         a = self._member_hashes(first)
         b = self._member_hashes(second)
-        added = sorted(set(b) - set(a))
-        removed = sorted(set(a) - set(b))
-        modified = sorted(name for name in set(a) & set(b) if a[name] != b[name])
-        unchanged = sorted(name for name in set(a) & set(b) if a[name] == b[name])
-        return {"added": added, "removed": removed, "modified": modified, "unchanged": unchanged}
+        return {
+            "added": sorted(set(b) - set(a)),
+            "removed": sorted(set(a) - set(b)),
+            "modified": sorted(name for name in set(a) & set(b) if a[name] != b[name]),
+            "unchanged": sorted(name for name in set(a) & set(b) if a[name] == b[name]),
+        }
 
     def _member_hashes(self, archive: str | Path) -> dict[str, str]:
         result: dict[str, str] = {}
@@ -574,25 +560,27 @@ class ArchiveManager:
 
     def convert(self, source: str | Path, destination: str | Path, *, format: str | None = None,
                 compression_level: int | None = None) -> Path:
-        """Convert a supported archive to another container by streaming members."""
+        """Convert a supported archive to ZIP or TAR-family."""
         src = self._path(source)
         dst = self._path(destination)
-        temp_dir = Path(tempfile.mkdtemp(prefix="alera-archive-convert-"))
+        cache_root = self.base_path / ".alera_cache"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        temp_dir = Path(tempfile.mkdtemp(prefix="archive-convert-", dir=cache_root))
         try:
             self.extract(src, temp_dir, max_total_size=self.max_extract_size)
-            items = [p.relative_to(temp_dir) for p in temp_dir.rglob("*") if p.is_file()]
-            # create() expects workspace-relative sources, so perform a direct container build here.
             fmt = self._normalize_format(format, dst)
             dst.parent.mkdir(parents=True, exist_ok=True)
+            level = self._level(compression_level)
+            files = [p for p in temp_dir.rglob("*") if p.is_file()]
             if fmt in self.ZIP_ALIASES:
-                with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=self._level(compression_level)) as zf:
-                    for rel in items:
-                        zf.write(temp_dir / rel, rel.as_posix())
+                with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED, compresslevel=level) as zf:
+                    for path in files:
+                        zf.write(path, path.relative_to(temp_dir).as_posix())
             elif fmt in {"tar", "tar.gz", "tar.bz2", "tar.xz"}:
                 mode = {"tar": "w", "tar.gz": "w:gz", "tar.bz2": "w:bz2", "tar.xz": "w:xz"}[fmt]
                 with tarfile.open(dst, mode) as tf:
-                    for rel in items:
-                        tf.add(temp_dir / rel, arcname=rel.as_posix())
+                    for path in files:
+                        tf.add(path, arcname=path.relative_to(temp_dir).as_posix())
             else:
                 raise AleraValidationError("Conversion target must be ZIP or TAR-family.")
             return dst
@@ -600,32 +588,29 @@ class ArchiveManager:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def remove_member(self, archive: str | Path, member: str, destination: str | Path | None = None) -> Path:
-        """Remove one member by rebuilding the archive safely."""
+        """Rebuild a ZIP archive without one member."""
         source = self._path(archive)
+        if not zipfile.is_zipfile(source):
+            raise AleraValidationError("remove_member currently supports ZIP-family archives only.")
         if destination is None:
             destination = source.with_name(source.name + ".tmp")
         dst = self._path(destination)
-        fmt = self.detect_format(source)
-        if fmt not in self.ZIP_ALIASES:
-            raise AleraValidationError("In-place member editing currently supports ZIP-family archives only.")
-        with zipfile.ZipFile(source, "r") as src, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as out:
+        with zipfile.ZipFile(source, "r") as src, zipfile.ZipFile(dst, "w") as out:
             for info in src.infolist():
-                if info.filename == member:
-                    continue
-                out.writestr(info, src.read(info))
-        if destination == source.with_name(source.name + ".tmp"):
-            os.replace(dst, source)
-            return source
+                if info.filename != member:
+                    out.writestr(info, src.read(info))
+        if Path(destination).resolve() == source:
+            raise AleraValidationError("Destination cannot equal source during member rebuild.")
         return dst
 
     def add_member(self, archive: str | Path, source: str | Path, member: str | None = None) -> Path:
-        """Add one file to a ZIP-family archive."""
+        """Add one file to an existing ZIP-family archive."""
         target = self._path(archive)
         path = self._path(source)
         if not path.is_file():
             raise FileNotFoundError(path)
         if not zipfile.is_zipfile(target):
-            raise AleraValidationError("add_member currently requires an existing ZIP-family archive.")
+            raise AleraValidationError("add_member requires an existing ZIP-family archive.")
         name = member or path.name
         if not self._safe_member(name):
             raise AleraPathError(f"Unsafe member name: {name}")
@@ -633,19 +618,64 @@ class ArchiveManager:
             zf.write(path, name)
         return target
 
-    def _stream_codec(self, path: Path, mode: str):
-        fmt = self.detect_format(path)
-        if fmt == "gz":
-            return gzip.open(path, mode)
-        if fmt == "bz2":
-            return bz2.open(path, mode)
-        if fmt == "xz":
-            return lzma.open(path, mode)
-        raise AleraValidationError("Not a supported standalone compressed stream.")
+    def stream_compress(self, source: str | Path, destination: str | Path, format: str, *, level: int | None = None) -> Path:
+        """Compress one file as GZIP, BZIP2, XZ, Zstandard, LZ4, or Brotli when installed."""
+        src = self._path(source)
+        dst = self._path(destination)
+        fmt = self._normalize_format(format)
+        level = self._level(level)
+        if not src.is_file():
+            raise FileNotFoundError(src)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        with src.open("rb") as inp:
+            if fmt == "gz":
+                out = gzip.open(dst, "wb", compresslevel=level)
+                with out:
+                    shutil.copyfileobj(inp, out, 1024 * 1024)
+            elif fmt == "bz2":
+                out = bz2.open(dst, "wb", compresslevel=level)
+                with out:
+                    shutil.copyfileobj(inp, out, 1024 * 1024)
+            elif fmt == "xz":
+                out = lzma.open(dst, "wb", preset=level)
+                with out:
+                    shutil.copyfileobj(inp, out, 1024 * 1024)
+            elif fmt == "zst":
+                try:
+                    import zstandard as zstd  # type: ignore
+                except ImportError as exc:
+                    raise AleraValidationError("Zstandard support requires optional 'zstandard'.") from exc
+                cctx = zstd.ZstdCompressor(level=max(1, min(level, 22)))
+                with dst.open("wb") as raw, cctx.stream_writer(raw) as out:
+                    shutil.copyfileobj(inp, out, 1024 * 1024)
+            elif fmt == "lz4":
+                try:
+                    import lz4.frame  # type: ignore
+                except ImportError as exc:
+                    raise AleraValidationError("LZ4 support requires optional 'lz4'.") from exc
+                with lz4.frame.open(dst, "wb", compression_level=level) as out:
+                    shutil.copyfileobj(inp, out, 1024 * 1024)
+            elif fmt == "br":
+                try:
+                    import brotli  # type: ignore
+                except ImportError as exc:
+                    raise AleraValidationError("Brotli support requires optional 'brotli'.") from exc
+                compressor = brotli.Compressor(quality=level)
+                with dst.open("wb") as out:
+                    for chunk in iter(lambda: inp.read(1024 * 1024), b""):
+                        out.write(compressor.process(chunk))
+                    out.write(compressor.finish())
+            else:
+                raise AleraValidationError("stream_compress supports gz, bz2, xz, zst, lz4, and br.")
+        return dst
+
+    def add(self, archive: str | Path, sources: list[str | Path], **kwargs: object) -> Path:
+        """Compatibility alias for create()."""
+        return self.create(archive, sources, **kwargs)
 
 
 class _ArchiveStream:
-    """Own both a member stream and its archive container."""
+    """Own a member stream and its underlying archive container."""
 
     def __init__(self, stream: BinaryIO, owner: object) -> None:
         self._stream = stream
@@ -659,9 +689,6 @@ class _ArchiveStream:
 
     def read(self, size: int = -1) -> bytes:
         return self._stream.read(size)
-
-    def readable(self) -> bool:
-        return True
 
     def close(self) -> None:
         try:
