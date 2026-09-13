@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from alera import Alera, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem
+from alera import Alera, AleraRuntime, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem
 
 
 def test_internal_storage_creates_central_layout(tmp_path: Path):
@@ -37,6 +37,7 @@ def test_hidden_files_use_internal_vault_by_default(tmp_path: Path):
     assert len(a.hidden.list_hidden()) == 1
     a.hidden.unhide(created)
     assert created.read_text(encoding="utf-8") == "hidden"
+    a.close()
 
 
 def test_hidden_config_live_disable(tmp_path: Path):
@@ -50,6 +51,7 @@ def test_hidden_config_live_disable(tmp_path: Path):
         pass
     else:
         raise AssertionError("disabled hidden storage should reject operations")
+    a.close()
 
 
 def test_operation_engine_history_and_listener():
@@ -60,6 +62,18 @@ def test_operation_engine_history_and_listener():
     assert received == [event]
     assert engine.history("create") == [event]
     assert engine.statistics()["events"] == 1
+
+
+def test_runtime_diagnostics_and_lifecycle(tmp_path: Path):
+    a = Alera(tmp_path)
+    assert isinstance(a.runtime, AleraRuntime)
+    diagnostics = a.diagnostics(include_services=False)
+    assert diagnostics["ok"] is True
+    assert diagnostics["internal"]["root"] == str(tmp_path / ".alera")
+    assert diagnostics["capabilities"]["filesystem"]["replace"] is True
+    assert a.runtime.shutdown_state is False
+    a.close()
+    assert a.runtime.shutdown_state is True
 
 
 def test_virtual_filesystem_max_operations(tmp_path: Path):
