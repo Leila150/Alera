@@ -1,4 +1,4 @@
-"""Alera: a powerful Python filesystem and system toolkit."""
+"""Alera: a powerful, cross-platform Python filesystem and system toolkit."""
 
 from .analysis import FileAnalysis
 from .analytics import FilesystemAnalytics
@@ -36,6 +36,7 @@ from .network import NetworkManager
 from .operations import FileEvent, OperationEngine
 from .paths import PathTools
 from .permissions import PermissionTools
+from .power import enhance_classes
 from .processes import ProcessManager
 from .recovery import RecoveryManager
 from .recycle_bin import RecycleBin
@@ -50,22 +51,35 @@ from .sync import SyncManager
 from .temporary import TemporaryFiles
 from .transactions import FileTransaction
 from .utilities import FileUtilities
-from .vfs import VirtualFileSystem
 from .versions import VersionManager
+from .vfs import VirtualFileSystem
 from .watcher import FileWatcher
 
 __all__ = [
-    "Alera", "AleraRuntime", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "HiddenConfig", "FileExplorer", "BinaryFileManager", "Experimental",
-    "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager", "FileAnalysis", "AtomicFiles",
-    "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools", "SnapshotManager", "StreamTools",
-    "FileWatcher", "SearchEngine", "SearchResult", "SearchIndex", "StorageAnalyzer", "MetadataManager", "LinkManager",
-    "BackupManager", "RecoveryManager", "HealthChecker", "FileTransaction", "FileSecurity", "RecycleBin",
-    "MountManager", "AndroidStorage", "FileInspector", "VirtualFileSystem", "DiskManager", "EncryptionManager",
-    "VersionManager", "SyncManager", "FileUtilities", "CleanupManager", "FileDatabase", "ProcessManager",
-    "NetworkManager", "StorageCalculator", "FilesystemAnalytics", "IntegrityManager", "AleraError",
-    "AleraValidationError", "AleraPathError", "AleraBinError", "cpu_information", "gpu_information", "gpu_available",
-    "ram_information", "storage_information", "spec_information", "restrictions", "python_information",
-    "platform_information", "environment_variables", "module_available",
+    "Alera", "AleraRuntime", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "HiddenConfig",
+    "FileExplorer", "BinaryFileManager", "Experimental", "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles",
+    "ArchiveManager", "FileAnalysis", "AtomicFiles", "FileCache", "DirectoryTools", "FileLock", "PathTools",
+    "PermissionTools", "SnapshotManager", "StreamTools", "FileWatcher", "SearchEngine", "SearchResult", "SearchIndex",
+    "StorageAnalyzer", "MetadataManager", "LinkManager", "BackupManager", "RecoveryManager", "HealthChecker",
+    "FileTransaction", "FileSecurity", "RecycleBin", "MountManager", "AndroidStorage", "FileInspector",
+    "VirtualFileSystem", "DiskManager", "EncryptionManager", "VersionManager", "SyncManager", "FileUtilities",
+    "CleanupManager", "FileDatabase", "ProcessManager", "NetworkManager", "StorageCalculator", "FilesystemAnalytics",
+    "IntegrityManager", "AleraError", "AleraValidationError", "AleraPathError", "AleraBinError", "cpu_information",
+    "gpu_information", "gpu_available", "ram_information", "storage_information", "spec_information", "restrictions",
+    "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
-__version__ = "0.4.0"
+# 0.5.0 universal power layer: every public Alera class gets common introspection,
+# health, timing, safe-call, capability, and snapshot primitives without replacing
+# any domain-specific method already defined by the class.
+enhance_classes([
+    Alera, AleraRuntime, AleraStorage, OperationEngine, CrashLogger, HiddenConfig, FileExplorer, BinaryFileManager,
+    Experimental, HiddenFiles, HiddenFileExplorer, TemporaryFiles, ArchiveManager, FileAnalysis, AtomicFiles, FileCache,
+    DirectoryTools, FileLock, PathTools, PermissionTools, SnapshotManager, StreamTools, FileWatcher, SearchEngine,
+    SearchResult, SearchIndex, StorageAnalyzer, MetadataManager, LinkManager, BackupManager, RecoveryManager, HealthChecker,
+    FileTransaction, FileSecurity, RecycleBin, MountManager, AndroidStorage, FileInspector, VirtualFileSystem, DiskManager,
+    EncryptionManager, VersionManager, SyncManager, FileUtilities, CleanupManager, FileDatabase, ProcessManager,
+    NetworkManager, StorageCalculator, FilesystemAnalytics, IntegrityManager,
+])
+
+__version__ = "0.5.0"
