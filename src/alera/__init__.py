@@ -11,6 +11,7 @@ from .cache import FileCache
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
 from .core import Alera
+from .crash import CrashLogger
 from .database import FileDatabase
 from .device import cpu_information, gpu_available, gpu_information, ram_information, spec_information, storage_information
 from .directory import DirectoryTools
@@ -52,7 +53,7 @@ from .versions import VersionManager
 from .watcher import FileWatcher
 
 __all__ = [
-    "Alera", "AleraStorage", "OperationEngine", "FileEvent", "FileExplorer", "BinaryFileManager", "Experimental",
+    "Alera", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "FileExplorer", "BinaryFileManager", "Experimental",
     "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager", "FileAnalysis", "AtomicFiles",
     "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools", "SnapshotManager", "StreamTools",
     "FileWatcher", "SearchEngine", "SearchResult", "SearchIndex", "StorageAnalyzer", "MetadataManager", "LinkManager",
