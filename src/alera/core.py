@@ -26,6 +26,7 @@ from .operations import OperationEngine
 from .permissions import PermissionTools
 from .processes import ProcessManager
 from .recycle_bin import RecycleBin
+from .runtime import AleraRuntime
 from .search_engine import SearchEngine
 from .security import FileSecurity
 from .storage import StorageAnalyzer
@@ -72,6 +73,7 @@ class Alera:
         self._hidden_config.bind(lambda enabled, storage: self.hidden.configure(enabled=enabled, storage=storage))
         self.hidden.configure(enabled=self._hidden_config.enabled, storage=self._hidden_config.storage)
         self.experimental._hidden_config = self._hidden_config
+        self.experimental.hidden = self.hidden
 
         self.android = AndroidStorage()
         self.backup = BackupManager(self.base_path)
@@ -103,13 +105,11 @@ class Alera:
                 except Exception:
                     pass
 
+        self.runtime = AleraRuntime(self)
+
     @property
     def hidden_config(self) -> HiddenConfig:
-        """Experimental hidden-storage configuration.
-
-        Defaults to enabled + Alera internal storage. Changes immediately
-        reconfigure the live hidden subsystem and can be persisted with save().
-        """
+        """Experimental hidden-storage configuration."""
         return self._hidden_config
 
     def information(self) -> dict:
@@ -125,8 +125,12 @@ class Alera:
             "hidden": self.hidden.information() if self.hidden.enabled else {"enabled": False, "backend": "disabled"},
             "operations": self.operations.statistics(),
             "crash_logging": {"directory": str(self.crash.directory), "installed": self.crash.installed},
+            "runtime": {"uptime": self.runtime.uptime, "shutdown": self.runtime.shutdown_state},
             "services": services,
         }
+
+    def diagnostics(self, *, include_services: bool = True) -> dict:
+        return self.runtime.diagnostics(include_services=include_services)
 
     def service(self, name: str):
         if not name or name.startswith("_"):
@@ -135,3 +139,13 @@ class Alera:
             return getattr(self, name)
         except AttributeError as exc:
             raise KeyError(name) from exc
+
+    def close(self) -> None:
+        """Gracefully stop runtime-owned hooks."""
+        self.runtime.shutdown()
+
+    def __enter__(self) -> "Alera":
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback) -> None:
+        self.close()
