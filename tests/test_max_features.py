@@ -1,6 +1,10 @@
 from pathlib import Path
 
-from alera import Alera, AleraRuntime, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem
+from alera import Alera, AleraRuntime, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem, __version__
+
+
+def test_version_is_0_5_0():
+    assert __version__ == "0.5.0"
 
 
 def test_internal_storage_creates_central_layout(tmp_path: Path):
@@ -12,6 +16,7 @@ def test_internal_storage_creates_central_layout(tmp_path: Path):
     assert storage.path("database").is_dir()
     assert storage.path("recovery").is_dir()
     assert storage.path("crash_logs").is_dir()
+    assert storage.path("config").is_dir()
 
 
 def test_hidden_config_defaults_and_persistence(tmp_path: Path):
@@ -67,10 +72,13 @@ def test_operation_engine_history_and_listener():
 def test_runtime_diagnostics_and_lifecycle(tmp_path: Path):
     a = Alera(tmp_path)
     assert isinstance(a.runtime, AleraRuntime)
-    diagnostics = a.diagnostics(include_services=False)
+    assert "files" in a.runtime.services()
+    assert "files" in a.runtime.capabilities()["services"]
+    diagnostics = a.diagnostics(deep=True)
+    assert diagnostics["version"] == "0.5.0"
     assert diagnostics["ok"] is True
     assert diagnostics["internal"]["root"] == str(tmp_path / ".alera")
-    assert diagnostics["capabilities"]["filesystem"]["replace"] is True
+    assert diagnostics["service_health"]
     assert a.runtime.shutdown_state is False
     a.close()
     assert a.runtime.shutdown_state is True
@@ -89,3 +97,18 @@ def test_virtual_filesystem_max_operations(tmp_path: Path):
     assert not vfs.exists("temporary.bin")
     vfs.export(str(tmp_path / "export"))
     assert (tmp_path / "export/docs/readme.txt").read_text() == "hello world"
+
+
+def test_universal_power_layer(tmp_path: Path):
+    a = Alera(tmp_path)
+    for service in (a.files, a.search, a.bin, a.vfs, a.storage, a.network, a.runtime):
+        assert callable(service.capabilities)
+        assert callable(service.describe)
+        assert callable(service.health)
+        assert callable(service.snapshot)
+        assert callable(service.timed)
+        assert callable(service.safe)
+        assert service.describe()["class"] == type(service).__name__
+    assert a.files.has("read")
+    assert a.files.timed("exists", "does-not-exist")["ok"] is True
+    a.close()
