@@ -8,11 +8,13 @@ from .backup import BackupManager
 from .binary import BinaryFileManager
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
+from .config import HiddenConfig, install_experimental_config
 from .crash import CrashLogger
 from .database import FileDatabase
 from .disks import DiskManager
 from .encryption import EncryptionManager
 from .explorer import FileExplorer
+from .experimental import Experimental
 from .health import HealthChecker
 from .hidden import HiddenFiles
 from .inspector import FileInspector
@@ -34,15 +36,18 @@ from .versions import VersionManager
 from .vfs import VirtualFileSystem
 from .watcher import FileWatcher
 
+install_experimental_config()
+
 
 class Alera:
-    """Unified entry point for Alera's dedicated filesystem/system services."""
+    """Unified entry point for Alera's filesystem/system services."""
 
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
         self.internal = AleraStorage(self.base_path)
         self.operations = OperationEngine()
         self.crash = CrashLogger(self.base_path)
+        self.crash.install()
 
         self.files = FileExplorer(self.base_path)
         self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
@@ -60,12 +65,14 @@ class Alera:
         self.search = SearchEngine(self.base_path, index_path=self.internal.path("index/search.sqlite3"))
         self.search.INTERNAL = frozenset(set(self.search.INTERNAL) | {".alera"})
         self.inspector = FileInspector(self.base_path)
-        self.hidden = HiddenFiles(self.base_path)
-        self.hidden._android_vault = self.internal.path("hidden")
-        self.hidden._android_manifest = self.hidden._android_vault / "index.json"
-        self.hidden._android_vault.mkdir(parents=True, exist_ok=True)
-        if self.hidden.mobile:
-            self.hidden._initialize_android_storage()
+
+        self.hidden = HiddenFiles(self.base_path, enabled=True, storage="internal")
+        self.experimental = Experimental(self.base_path)
+        self._hidden_config = HiddenConfig(self.internal.path("config/experimental.json")).load()
+        self._hidden_config.bind(lambda enabled, storage: self.hidden.configure(enabled=enabled, storage=storage))
+        self.hidden.configure(enabled=self._hidden_config.enabled, storage=self._hidden_config.storage)
+        self.experimental._hidden_config = self._hidden_config
+
         self.android = AndroidStorage()
         self.backup = BackupManager(self.base_path)
         self.cleanup = CleanupManager(self.base_path)
@@ -96,6 +103,15 @@ class Alera:
                 except Exception:
                     pass
 
+    @property
+    def hidden_config(self) -> HiddenConfig:
+        """Experimental hidden-storage configuration.
+
+        Defaults to enabled + Alera internal storage. Changes immediately
+        reconfigure the live hidden subsystem and can be persisted with save().
+        """
+        return self._hidden_config
+
     def information(self) -> dict:
         services = {
             name: type(value).__name__
@@ -105,6 +121,8 @@ class Alera:
         return {
             "base_path": str(self.files.base_path),
             "internal": self.internal.information(),
+            "hidden_config": self.hidden_config.as_dict(),
+            "hidden": self.hidden.information() if self.hidden.enabled else {"enabled": False, "backend": "disabled"},
             "operations": self.operations.statistics(),
             "crash_logging": {"directory": str(self.crash.directory), "installed": self.crash.installed},
             "services": services,
