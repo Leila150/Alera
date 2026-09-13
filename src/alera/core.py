@@ -41,12 +41,27 @@ class Alera:
         self.base_path = base_path or "."
         self.internal = AleraStorage(self.base_path)
         self.operations = OperationEngine()
+
         self.files = FileExplorer(self.base_path)
+        # The filesystem core now treats .alera as protected internal storage
+        # and stores its recycle-bin data in the centralized bin subsystem.
+        self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
+        self.files._bin_path = self.internal.path("bin")
+        self.files._bin_path.mkdir(parents=True, exist_ok=True)
+
         # BinaryFileManager merges its binary API into FileExplorer at import
         # time. ``a.binary`` is therefore the exact same filesystem core.
         self.binary = self.files
+
         self.bin = RecycleBin(self.base_path)
-        self.search = SearchEngine(self.base_path)
+        self.bin.bin_path = self.internal.path("bin")
+        self.bin._manifest_path = self.bin.bin_path / self.bin.MANIFEST
+        self.bin._journal_path = self.bin.bin_path / self.bin.JOURNAL
+        self.bin._manifest = self.bin._load()
+        self.bin._repair_manifest()
+
+        self.search = SearchEngine(self.base_path, index_path=self.internal.path("index/search.sqlite3"))
+        self.search.INTERNAL = frozenset(set(self.search.INTERNAL) | {".alera"})
         self.inspector = FileInspector(self.base_path)
         self.hidden = HiddenFiles(self.base_path)
         self.android = AndroidStorage()
