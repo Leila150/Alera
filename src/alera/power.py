@@ -1,13 +1,8 @@
-"""Universal power layer for Alera services.
-
-Every public Alera service can expose the same introspection, health, timing,
-and safe-call primitives without changing its domain-specific API.
-"""
+"""Universal power layer for Alera services."""
 from __future__ import annotations
 
 import inspect
 import time
-from types import MethodType
 from typing import Any, Callable
 
 
@@ -28,34 +23,34 @@ def _public_methods(instance: Any) -> dict[str, str]:
     return result
 
 
+def _public_properties(instance: Any) -> list[str]:
+    result: list[str] = []
+    for name in dir(instance):
+        if name.startswith("_"):
+            continue
+        try:
+            value = getattr(instance, name)
+        except Exception:
+            continue
+        if not callable(value):
+            result.append(name)
+    return sorted(result)
+
+
 def _capabilities(self: Any) -> dict[str, Any]:
     methods = _public_methods(self)
-    return {
-        "class": type(self).__name__,
-        "module": type(self).__module__,
-        "methods": methods,
-        "method_count": len(methods),
-        "properties": sorted(
-            name for name in dir(self)
-            if not name.startswith("_") and not callable(getattr(self, name, None))
-        ),
-    }
+    return {"class": type(self).__name__, "module": type(self).__module__, "methods": methods, "method_count": len(methods), "properties": _public_properties(self)}
 
 
 def _describe(self: Any) -> dict[str, Any]:
-    return {
-        "class": type(self).__name__,
-        "module": type(self).__module__,
-        "doc": inspect.getdoc(type(self)) or "",
-        "capabilities": _capabilities(self),
-    }
+    return {"class": type(self).__name__, "module": type(self).__module__, "doc": inspect.getdoc(type(self)) or "", "capabilities": _capabilities(self)}
 
 
 def _health(self: Any) -> dict[str, Any]:
     checks: dict[str, Any] = {"class": type(self).__name__, "ok": True}
     try:
-        if hasattr(self, "base_path"):
-            path = getattr(self, "base_path")
+        path = getattr(self, "base_path", None)
+        if path is not None:
             checks["base_path"] = str(path)
             checks["base_exists"] = bool(getattr(path, "exists", lambda: True)())
         if hasattr(self, "enabled"):
@@ -68,8 +63,7 @@ def _health(self: Any) -> dict[str, Any]:
 
 def _snapshot(self: Any, *, include_private: bool = False) -> dict[str, Any]:
     data: dict[str, Any] = {"class": type(self).__name__}
-    values = getattr(self, "__dict__", {})
-    for key, value in values.items():
+    for key, value in getattr(self, "__dict__", {}).items():
         if not include_private and key.startswith("_"):
             continue
         if isinstance(value, (str, int, float, bool, type(None))):
@@ -97,17 +91,11 @@ def _timed(self, method: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
         result = _call(self, method, *args, **kwargs)
         return {"ok": True, "method": method, "elapsed": time.perf_counter() - started, "result": result}
     except Exception as exc:
-        return {
-            "ok": False,
-            "method": method,
-            "elapsed": time.perf_counter() - started,
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-        }
+        return {"ok": False, "method": method, "elapsed": time.perf_counter() - started, "error_type": type(exc).__name__, "error": str(exc)}
 
 
 def _has(self, name: str) -> bool:
-    return hasattr(self, name) and not name.startswith("_")
+    return bool(name) and not name.startswith("_") and hasattr(self, name)
 
 
 def _safe(self, callable_: Callable[..., Any], *args: Any, default: Any = None, **kwargs: Any) -> Any:
@@ -118,28 +106,18 @@ def _safe(self, callable_: Callable[..., Any], *args: Any, default: Any = None, 
 
 
 def _resource_path(self, name: str = ""):
+    from pathlib import Path
     base = getattr(self, "base_path", None)
     if base is None:
         raise AttributeError("service has no base_path")
-    from pathlib import Path
     return (Path(base) / name).resolve()
 
 
-_METHODS = {
-    "capabilities": _capabilities,
-    "describe": _describe,
-    "health": _health,
-    "snapshot": _snapshot,
-    "call": _call,
-    "timed": _timed,
-    "has": _has,
-    "safe": _safe,
-    "resource_path": _resource_path,
-}
+_METHODS = {"capabilities": _capabilities, "describe": _describe, "health": _health, "snapshot": _snapshot, "call": _call, "timed": _timed, "has": _has, "safe": _safe, "resource_path": _resource_path}
 
 
 def enhance_class(cls: type) -> type:
-    """Install missing universal power methods on a class, preserving APIs."""
+    """Install missing universal power methods while preserving domain APIs."""
     for name, function in _METHODS.items():
         if not hasattr(cls, name):
             setattr(cls, name, function)
@@ -147,7 +125,6 @@ def enhance_class(cls: type) -> type:
 
 
 def enhance_instance(instance: Any) -> Any:
-    """Enhance one service instance without replacing existing methods."""
     enhance_class(type(instance))
     return instance
 
