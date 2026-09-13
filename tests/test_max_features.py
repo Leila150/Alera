@@ -1,4 +1,5 @@
 from pathlib import Path
+import sys
 
 import pytest
 
@@ -107,20 +108,24 @@ def test_runtime_rejects_calls_after_shutdown(tmp_path: Path):
 
 
 def test_multiple_crash_loggers_do_not_clobber_hooks(tmp_path: Path):
-    original_sys = __import__("sys").excepthook
+    original_sys = sys.excepthook
+    original_thread = getattr(__import__("threading"), "excepthook", None)
     first = CrashLogger(tmp_path / "one")
     second = CrashLogger(tmp_path / "two")
     first.install()
     second.install()
     try:
         assert first.installed and second.installed
-        assert __import__("sys").excepthook is CrashLogger._system_hook
+        assert getattr(sys.excepthook, "__func__", None) is CrashLogger._system_hook.__func__
         first.uninstall()
         assert second.installed
-        assert __import__("sys").excepthook is CrashLogger._system_hook
+        assert getattr(sys.excepthook, "__func__", None) is CrashLogger._system_hook.__func__
     finally:
         second.uninstall()
-        assert __import__("sys").excepthook is original_sys
+        assert sys.excepthook is original_sys
+        if original_thread is not None:
+            import threading
+            assert threading.excepthook is original_thread
 
 
 def test_virtual_filesystem_max_operations(tmp_path: Path):
