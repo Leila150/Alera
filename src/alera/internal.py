@@ -19,12 +19,13 @@ class AleraStorage:
 
     ROOT_NAME = ".alera"
     DIRECTORIES = (
-        "bin", "cache", "index", "database", "recovery", "versions",
-        "snapshots", "transactions", "locks", "archives", "backups",
-        "sync", "watcher", "security", "temp", "search", "logs",
+        "bin", "hidden", "cache", "index", "database", "recovery", "versions",
+        "snapshots", "transactions", "locks", "archives", "backups", "sync",
+        "watcher", "security", "temp", "search", "logs",
     )
     LEGACY_MAP = {
         ".alera_bin": "bin",
+        ".alera_hidden": "hidden",
         ".alera_cache": "cache",
         ".alera_index": "index",
         ".alera_database": "database",
