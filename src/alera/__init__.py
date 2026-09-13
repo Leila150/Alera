@@ -72,6 +72,25 @@ __all__ = [
     "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
+# Public compatibility aliases. The canonical implementations keep their
+# explicit names, while these common spellings make the API easier to use.
+FileExplorer.read_text = FileExplorer.read_file
+FileExplorer.write_text = FileExplorer.write_file
+FileExplorer.append_text = FileExplorer.append_file
+FileExplorer.read_binary = FileExplorer.read_binary_file
+FileExplorer.write_binary = FileExplorer.write_binary_file
+FileExplorer.append_binary = getattr(FileExplorer, "append_binary_file", None) or getattr(FileExplorer, "binary_append", None)
+FileExplorer.files = FileExplorer.list_files
+FileExplorer.folders = FileExplorer.list_folders
+FileExplorer.search_extension = FileExplorer.find_by_extension
+
+HiddenFiles.info = HiddenFiles.information
+HiddenFiles.create_file = HiddenFiles.create_hidden_file
+HiddenFiles.create_binary_file = HiddenFiles.create_hidden_binary
+HiddenFiles.create_folder = HiddenFiles.create_hidden_folder
+
+OperationEngine.stats = OperationEngine.statistics
+
 # 0.5.0 universal power layer: patch every class defined inside Alera's own
 # modules, including helper/dataclass classes that are not part of __all__.
 # Existing domain-specific methods are never replaced.
