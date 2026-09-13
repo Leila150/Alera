@@ -38,7 +38,9 @@ class Alera:
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
         self.files = FileExplorer(self.base_path)
-        self.binary = BinaryFileManager(self.base_path)
+        # BinaryFileManager now merges its binary API into FileExplorer at import
+        # time. Keep ``a.binary`` as a compatibility alias to the same core object.
+        self.binary = self.files
         self.bin = RecycleBin(self.base_path)
         self.search = SearchEngine(self.base_path)
         self.inspector = FileInspector(self.base_path)
