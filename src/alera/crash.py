@@ -10,11 +10,22 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 
 class CrashLogger:
-    """Capture unhandled exceptions without masking the original crash."""
+    """Capture unhandled exceptions without masking the original crash.
+
+    Hook installation is process-wide and reference-counted so creating or
+    closing multiple :class:`CrashLogger` instances cannot accidentally
+    overwrite another instance's exception hooks.
+    """
+
+    _active: ClassVar[list["CrashLogger"]] = []
+    _hook_lock: ClassVar[threading.RLock] = threading.RLock()
+    _original_sys_hook: ClassVar[Any] = None
+    _original_thread_hook: ClassVar[Any] = None
+    _hooks_installed: ClassVar[bool] = False
 
     def __init__(self, base_path: str | os.PathLike[str] = "", *, max_reports: int = 100) -> None:
         raw = Path(base_path).expanduser() if str(base_path) else Path.cwd()
@@ -22,8 +33,6 @@ class CrashLogger:
         self.directory = self.base_path / ".alera" / "crash_logs"
         self.max_reports = max(1, int(max_reports))
         self._installed = False
-        self._previous_sys_hook = None
-        self._previous_thread_hook = None
         try:
             self.directory.mkdir(parents=True, exist_ok=True)
         except OSError:
@@ -77,57 +86,89 @@ class CrashLogger:
         except Exception:
             return None
 
+    @classmethod
+    def _system_hook(cls, exc_type, exc_value, exc_traceback) -> None:
+        with cls._hook_lock:
+            loggers = tuple(cls._active)
+            previous = cls._original_sys_hook
+        for logger in loggers:
+            try:
+                logger.report(exc_type, exc_value, exc_traceback)
+            except Exception:
+                pass
+        if previous is not None:
+            try:
+                previous(exc_type, exc_value, exc_traceback)
+            except Exception:
+                pass
+
+    @classmethod
+    def _thread_hook(cls, args) -> None:
+        with cls._hook_lock:
+            loggers = tuple(cls._active)
+            previous = cls._original_thread_hook
+        context = {"thread": args.thread.name if args.thread else None}
+        for logger in loggers:
+            try:
+                logger.report(args.exc_type, args.exc_value, args.exc_traceback, context=context)
+            except Exception:
+                pass
+        if previous is not None:
+            try:
+                previous(args)
+            except Exception:
+                pass
+
     def install(self) -> "CrashLogger":
-        if self._installed:
-            return self
-        self._previous_sys_hook = sys.excepthook
-        self._previous_thread_hook = getattr(threading, "excepthook", None)
-
-        def system_hook(exc_type, exc_value, exc_traceback):
-            try:
-                self.report(exc_type, exc_value, exc_traceback)
-            finally:
-                previous = self._previous_sys_hook
-                if previous and previous is not system_hook:
-                    previous(exc_type, exc_value, exc_traceback)
-
-        def thread_hook(args):
-            try:
-                self.report(
-                    args.exc_type,
-                    args.exc_value,
-                    args.exc_traceback,
-                    context={"thread": args.thread.name if args.thread else None},
-                )
-            finally:
-                previous = self._previous_thread_hook
-                if previous and previous is not thread_hook:
-                    previous(args)
-
-        sys.excepthook = system_hook
-        if hasattr(threading, "excepthook"):
-            threading.excepthook = thread_hook
-        self._installed = True
+        with self._hook_lock:
+            if self._installed:
+                return self
+            if not self.__class__._hooks_installed:
+                self.__class__._original_sys_hook = sys.excepthook
+                self.__class__._original_thread_hook = getattr(threading, "excepthook", None)
+                sys.excepthook = self.__class__._system_hook
+                if hasattr(threading, "excepthook"):
+                    threading.excepthook = self.__class__._thread_hook
+                self.__class__._hooks_installed = True
+            if self not in self.__class__._active:
+                self.__class__._active.append(self)
+            self._installed = True
         return self
 
     def uninstall(self) -> None:
-        if not self._installed:
-            return
-        if self._previous_sys_hook is not None:
-            sys.excepthook = self._previous_sys_hook
-        if self._previous_thread_hook is not None and hasattr(threading, "excepthook"):
-            threading.excepthook = self._previous_thread_hook
-        self._previous_sys_hook = None
-        self._previous_thread_hook = None
-        self._installed = False
+        with self._hook_lock:
+            if not self._installed:
+                return
+            try:
+                self.__class__._active.remove(self)
+            except ValueError:
+                pass
+            self._installed = False
+            if not self.__class__._active and self.__class__._hooks_installed:
+                original = self.__class__._original_sys_hook
+                original_thread = self.__class__._original_thread_hook
+                if original is not None and sys.excepthook is self.__class__._system_hook:
+                    sys.excepthook = original
+                if hasattr(threading, "excepthook") and original_thread is not None and threading.excepthook is self.__class__._thread_hook:
+                    threading.excepthook = original_thread
+                self.__class__._original_sys_hook = None
+                self.__class__._original_thread_hook = None
+                self.__class__._hooks_installed = False
 
     def list(self, *, newest_first: bool = True) -> list[Path]:
         try:
             reports = list(self.directory.glob("crash-*.json"))
         except OSError:
             return []
-        reports.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=newest_first)
-        return reports
+        valid: list[Path] = []
+        for path in reports:
+            try:
+                path.stat()
+                valid.append(path)
+            except OSError:
+                pass
+        valid.sort(key=lambda path: path.stat().st_mtime, reverse=newest_first)
+        return valid
 
     def read(self, report: str | os.PathLike[str]) -> dict[str, Any]:
         path = Path(report)
