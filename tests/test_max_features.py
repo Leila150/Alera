@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from alera import Alera, AleraRuntime, AleraStorage, HiddenConfig, OperationEngine, VirtualFileSystem, __version__
+from alera.crash import CrashLogger
 
 
 def test_version_is_0_5_0():
@@ -19,6 +20,14 @@ def test_internal_storage_creates_central_layout(tmp_path: Path):
     assert storage.path("recovery").is_dir()
     assert storage.path("crash_logs").is_dir()
     assert storage.path("config").is_dir()
+
+
+def test_internal_storage_rejects_escape(tmp_path: Path):
+    storage = AleraStorage(tmp_path)
+    with pytest.raises(ValueError):
+        storage.path("../outside")
+    with pytest.raises(ValueError):
+        storage.relative(tmp_path / "outside")
 
 
 def test_hidden_config_defaults_and_persistence(tmp_path: Path):
@@ -85,6 +94,33 @@ def test_runtime_diagnostics_and_lifecycle(tmp_path: Path):
     assert a.runtime.shutdown_state is False
     a.close()
     assert a.runtime.shutdown_state is True
+    a.close()
+
+
+def test_runtime_rejects_calls_after_shutdown(tmp_path: Path):
+    a = Alera(tmp_path)
+    a.close()
+    with pytest.raises(RuntimeError):
+        a.runtime.call("files", "exists", "anything")
+    with pytest.raises(RuntimeError):
+        a.runtime.benchmark("files", "exists", "anything")
+
+
+def test_multiple_crash_loggers_do_not_clobber_hooks(tmp_path: Path):
+    original_sys = __import__("sys").excepthook
+    first = CrashLogger(tmp_path / "one")
+    second = CrashLogger(tmp_path / "two")
+    first.install()
+    second.install()
+    try:
+        assert first.installed and second.installed
+        assert __import__("sys").excepthook is CrashLogger._system_hook
+        first.uninstall()
+        assert second.installed
+        assert __import__("sys").excepthook is CrashLogger._system_hook
+    finally:
+        second.uninstall()
+        assert __import__("sys").excepthook is original_sys
 
 
 def test_virtual_filesystem_max_operations(tmp_path: Path):
