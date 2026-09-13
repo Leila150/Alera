@@ -10,6 +10,7 @@ from .binary import BinaryFileManager
 from .cache import FileCache
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
+from .config import HiddenConfig
 from .core import Alera
 from .crash import CrashLogger
 from .database import FileDatabase
@@ -53,7 +54,7 @@ from .versions import VersionManager
 from .watcher import FileWatcher
 
 __all__ = [
-    "Alera", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "FileExplorer", "BinaryFileManager", "Experimental",
+    "Alera", "AleraStorage", "OperationEngine", "FileEvent", "CrashLogger", "HiddenConfig", "FileExplorer", "BinaryFileManager", "Experimental",
     "HiddenFiles", "HiddenFileExplorer", "TemporaryFiles", "ArchiveManager", "FileAnalysis", "AtomicFiles",
     "FileCache", "DirectoryTools", "FileLock", "PathTools", "PermissionTools", "SnapshotManager", "StreamTools",
     "FileWatcher", "SearchEngine", "SearchResult", "SearchIndex", "StorageAnalyzer", "MetadataManager", "LinkManager",
