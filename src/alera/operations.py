@@ -95,12 +95,13 @@ class OperationEngine:
     def statistics(self) -> dict[str, Any]:
         with self._lock:
             events = list(self._history)
+            listeners = sum(len(value) for value in self._listeners.values())
         operations: dict[str, int] = {}
         failures = 0
         for event in events:
             operations[event.operation] = operations.get(event.operation, 0) + 1
-            failures += not event.success
-        return {"events": len(events), "failures": failures, "operations": operations, "listeners": sum(len(v) for v in self._listeners.values())}
+            failures += int(not event.success)
+        return {"events": len(events), "failures": failures, "operations": operations, "listeners": listeners}
 
     def clear_history(self) -> None:
         with self._lock:
