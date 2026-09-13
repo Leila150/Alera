@@ -43,7 +43,6 @@ class Alera:
         self.operations = OperationEngine()
 
         self.files = FileExplorer(self.base_path)
-        # .alera is the single protected runtime namespace.
         self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
         self.files._bin_path = self.internal.path("bin")
         self.files._bin_path.mkdir(parents=True, exist_ok=True)
@@ -66,6 +65,8 @@ class Alera:
         self.hidden._android_vault = self.internal.path("hidden")
         self.hidden._android_manifest = self.hidden._android_vault / "index.json"
         self.hidden._android_vault.mkdir(parents=True, exist_ok=True)
+        if self.hidden.mobile:
+            self.hidden._initialize_android_storage()
         self.android = AndroidStorage()
         self.backup = BackupManager(self.base_path)
         self.cleanup = CleanupManager(self.base_path)
@@ -89,8 +90,6 @@ class Alera:
         self.analytics = FilesystemAnalytics(self.base_path)
         self.watcher = FileWatcher(self.base_path)
 
-        # Give every service access to one operation bus without forcing the
-        # individual service APIs to depend on one another.
         for value in vars(self).values():
             if value is not self.operations and hasattr(value, "__dict__"):
                 try:
