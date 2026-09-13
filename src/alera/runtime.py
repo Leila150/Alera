@@ -30,11 +30,7 @@ class AleraRuntime:
         return self._shutdown
 
     def services(self) -> dict[str, str]:
-        return {
-            name: type(value).__name__
-            for name, value in vars(self.owner).items()
-            if not name.startswith("_") and name != "base_path"
-        }
+        return {name: type(value).__name__ for name, value in vars(self.owner).items() if not name.startswith("_") and name != "base_path"}
 
     def service(self, name: str) -> Any:
         if not name or name.startswith("_"):
@@ -45,21 +41,12 @@ class AleraRuntime:
             raise KeyError(name) from exc
 
     def capabilities(self) -> dict[str, Any]:
-        optional = {
-            name: importlib.util.find_spec(name) is not None
-            for name in ("psutil", "py7zr", "rarfile", "zstandard", "lz4", "brotli")
-        }
+        optional = {name: importlib.util.find_spec(name) is not None for name in ("psutil", "py7zr", "rarfile", "zstandard", "lz4", "brotli")}
         return {
             "platform": sys.platform,
             "os": os.name,
             "python": platform.python_version(),
-            "filesystem": {
-                "symlink": hasattr(os, "symlink"),
-                "hardlink": hasattr(os, "link"),
-                "replace": hasattr(os, "replace"),
-                "scandir": hasattr(os, "scandir"),
-                "statvfs": hasattr(os, "statvfs"),
-            },
+            "filesystem": {"symlink": hasattr(os, "symlink"), "hardlink": hasattr(os, "link"), "replace": hasattr(os, "replace"), "scandir": hasattr(os, "scandir"), "statvfs": hasattr(os, "statvfs")},
             "optional_dependencies": optional,
             "services": self.services(),
         }
@@ -69,57 +56,26 @@ class AleraRuntime:
         return {name: str(path) for name, path in self.owner.internal.iter_subsystems()}
 
     def environment(self) -> dict[str, Any]:
-        return {
-            "python": sys.version,
-            "implementation": platform.python_implementation(),
-            "platform": platform.platform(),
-            "machine": platform.machine(),
-            "processor": platform.processor(),
-            "hostname": platform.node(),
-            "pid": os.getpid(),
-            "cwd": str(Path.cwd()),
-            "base_path": str(self.owner.files.base_path),
-        }
+        return {"python": sys.version, "implementation": platform.python_implementation(), "platform": platform.platform(), "machine": platform.machine(), "processor": platform.processor(), "hostname": platform.node(), "pid": os.getpid(), "cwd": str(Path.cwd()), "base_path": str(self.owner.files.base_path)}
 
     def resources(self) -> dict[str, Any]:
         usage = shutil.disk_usage(self.owner.files.base_path)
-        result: dict[str, Any] = {
-            "disk": {"total": usage.total, "used": usage.used, "free": usage.free},
-            "uptime": self.uptime,
-            "pid": os.getpid(),
-        }
+        result: dict[str, Any] = {"disk": {"total": usage.total, "used": usage.used, "free": usage.free}, "uptime": self.uptime, "pid": os.getpid()}
         try:
             import resource
             value = resource.getrusage(resource.RUSAGE_SELF)
-            result["process"] = {
-                "max_rss": getattr(value, "ru_maxrss", None),
-                "user_time": value.ru_utime,
-                "system_time": value.ru_stime,
-            }
+            result["process"] = {"max_rss": getattr(value, "ru_maxrss", None), "user_time": value.ru_utime, "system_time": value.ru_stime}
         except (ImportError, AttributeError, OSError):
             result["process"] = {}
         return result
 
     def diagnostics(self, *, include_services: bool = True, deep: bool = False) -> dict[str, Any]:
-        result = {
-            "ok": True,
-            "version": getattr(importlib.util.find_spec("alera"), "name", "unknown"),
-            "uptime": self.uptime,
-            "environment": self.environment(),
-            "capabilities": self.capabilities(),
-            "resources": self.resources(),
-            "internal": self.owner.internal.information(),
-            "hidden_config": self.owner.hidden_config.as_dict(),
-            "crash_logging": {
-                "installed": self.owner.crash.installed,
-                "reports": len(self.owner.crash.list()),
-            },
-        }
         try:
             import alera
-            result["version"] = getattr(alera, "__version__", "unknown")
+            version = getattr(alera, "__version__", "unknown")
         except Exception:
-            result["version"] = "unknown"
+            version = "unknown"
+        result = {"ok": True, "version": version, "uptime": self.uptime, "environment": self.environment(), "capabilities": self.capabilities(), "resources": self.resources(), "internal": self.owner.internal.information(), "hidden_config": self.owner.hidden_config.as_dict(), "crash_logging": {"installed": self.owner.crash.installed, "reports": len(self.owner.crash.list())}}
         if include_services:
             result["services"] = self.services()
         if deep:
