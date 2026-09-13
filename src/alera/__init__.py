@@ -1,5 +1,8 @@
 """Alera: a powerful, cross-platform Python filesystem and system toolkit."""
 
+import inspect
+import sys
+
 from .analysis import FileAnalysis
 from .analytics import FilesystemAnalytics
 from .android import AndroidStorage
@@ -69,17 +72,17 @@ __all__ = [
     "python_information", "platform_information", "environment_variables", "module_available",
 ]
 
-# 0.5.0 universal power layer: every public Alera class gets common introspection,
-# health, timing, safe-call, capability, and snapshot primitives without replacing
-# any domain-specific method already defined by the class.
-enhance_classes([
-    Alera, AleraRuntime, AleraStorage, OperationEngine, CrashLogger, HiddenConfig, FileExplorer, BinaryFileManager,
-    Experimental, HiddenFiles, HiddenFileExplorer, TemporaryFiles, ArchiveManager, FileAnalysis, AtomicFiles, FileCache,
-    DirectoryTools, FileLock, PathTools, PermissionTools, SnapshotManager, StreamTools, FileWatcher, SearchEngine,
-    SearchResult, SearchIndex, StorageAnalyzer, MetadataManager, LinkManager, BackupManager, RecoveryManager, HealthChecker,
-    FileTransaction, FileSecurity, RecycleBin, MountManager, AndroidStorage, FileInspector, VirtualFileSystem, DiskManager,
-    EncryptionManager, VersionManager, SyncManager, FileUtilities, CleanupManager, FileDatabase, ProcessManager,
-    NetworkManager, StorageCalculator, FilesystemAnalytics, IntegrityManager,
-])
+# 0.5.0 universal power layer: patch every class defined inside Alera's own
+# modules, including helper/dataclass classes that are not part of __all__.
+# Existing domain-specific methods are never replaced.
+_own_classes = []
+for _module in list(sys.modules.values()):
+    if _module is None or not getattr(_module, "__name__", "").startswith("alera."):
+        continue
+    for _name, _value in vars(_module).items():
+        if inspect.isclass(_value) and getattr(_value, "__module__", "").startswith("alera."):
+            _own_classes.append(_value)
+enhance_classes(_own_classes)
+del _own_classes, _module, _name, _value
 
 __version__ = "0.5.0"
