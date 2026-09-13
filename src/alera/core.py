@@ -29,6 +29,7 @@ from .processes import ProcessManager
 from .recycle_bin import RecycleBin
 from .runtime import AleraRuntime
 from .search_engine import SearchEngine
+from .search_index import SearchIndex
 from .security import FileSecurity
 from .storage import StorageAnalyzer
 from .sync import SyncManager
@@ -55,7 +56,12 @@ class Alera:
         self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
         self.files._bin_path = self.internal.path("bin")
         self.files._bin_path.mkdir(parents=True, exist_ok=True)
-        self.binary = self.files
+
+        # BinaryFileManager is the real binary service. Keep it separate from
+        # FileExplorer so binary-only methods are never lost behind an alias.
+        self.binary = BinaryFileManager(self.base_path)
+        self.binary.INTERNAL = frozenset(set(self.binary.INTERNAL) | {".alera"})
+        self.binary._bin_path = self.files._bin_path
 
         self.bin = RecycleBin(self.base_path)
         self.bin.bin_path = self.internal.path("bin")
@@ -66,6 +72,7 @@ class Alera:
 
         self.search = SearchEngine(self.base_path, index_path=self.internal.path("index/search.sqlite3"))
         self.search.INTERNAL = frozenset(set(self.search.INTERNAL) | {".alera"})
+        self.search_index = SearchIndex(self.base_path, database=self.internal.path("index/search_index.sqlite3"))
         self.inspector = FileInspector(self.base_path)
 
         self.hidden = HiddenFiles(self.base_path, enabled=True, storage="internal")
@@ -97,6 +104,25 @@ class Alera:
         self.versions = VersionManager(self.base_path)
         self.analytics = FilesystemAnalytics(self.base_path)
         self.watcher = FileWatcher(self.base_path)
+
+        # Small compatibility aliases for the public binary facade.
+        for alias, target in {
+            "crc32": "binary_crc32",
+            "adler32": "binary_adler32",
+            "statistics": "binary_statistics",
+            "hexdump": "binary_hexdump",
+            "frequency": "binary_frequency",
+            "entropy": "binary_entropy",
+            "compare": "binary_compare",
+            "compare_range": "binary_compare_range",
+            "read": "binary_read",
+            "write": "binary_write",
+            "append": "binary_append",
+            "hash": "binary_hash",
+            "hashes": "binary_hashes",
+        }.items():
+            if not hasattr(self.binary, alias) and hasattr(self.binary, target):
+                setattr(self.binary, alias, getattr(self.binary, target))
 
         for value in vars(self).values():
             if value is not self.operations and hasattr(value, "__dict__"):
