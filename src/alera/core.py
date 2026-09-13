@@ -8,6 +8,7 @@ from .backup import BackupManager
 from .binary import BinaryFileManager
 from .calculator import StorageCalculator
 from .cleanup import CleanupManager
+from .crash import CrashLogger
 from .database import FileDatabase
 from .disks import DiskManager
 from .encryption import EncryptionManager
@@ -35,20 +36,18 @@ from .watcher import FileWatcher
 
 
 class Alera:
-    """Unified entry point for Alera's filesystem and system services."""
+    """Unified entry point for Alera's dedicated filesystem/system services."""
 
     def __init__(self, base_path: str = "") -> None:
         self.base_path = base_path or "."
         self.internal = AleraStorage(self.base_path)
         self.operations = OperationEngine()
+        self.crash = CrashLogger(self.base_path)
 
         self.files = FileExplorer(self.base_path)
         self.files.INTERNAL = frozenset(set(self.files.INTERNAL) | {".alera"})
         self.files._bin_path = self.internal.path("bin")
         self.files._bin_path.mkdir(parents=True, exist_ok=True)
-
-        # BinaryFileManager merges its binary API into FileExplorer at import
-        # time. ``a.binary`` is therefore the exact same filesystem core.
         self.binary = self.files
 
         self.bin = RecycleBin(self.base_path)
@@ -107,11 +106,11 @@ class Alera:
             "base_path": str(self.files.base_path),
             "internal": self.internal.information(),
             "operations": self.operations.statistics(),
+            "crash_logging": {"directory": str(self.crash.directory), "installed": self.crash.installed},
             "services": services,
         }
 
     def service(self, name: str):
-        """Return a service by attribute name."""
         if not name or name.startswith("_"):
             raise ValueError("Invalid service name")
         try:
