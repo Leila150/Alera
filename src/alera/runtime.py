@@ -29,10 +29,15 @@ class AleraRuntime:
     def shutdown_state(self) -> bool:
         return self._shutdown
 
+    def _ensure_running(self) -> None:
+        if self._shutdown:
+            raise RuntimeError("Alera runtime has already been shut down")
+
     def services(self) -> dict[str, str]:
         return {name: type(value).__name__ for name, value in vars(self.owner).items() if not name.startswith("_") and name != "base_path"}
 
     def service(self, name: str) -> Any:
+        self._ensure_running()
         if not name or name.startswith("_"):
             raise ValueError("Invalid service name")
         try:
@@ -53,14 +58,21 @@ class AleraRuntime:
 
     def paths(self) -> dict[str, str]:
         """Return the centralized internal subsystem paths."""
+        self._ensure_running()
         return {name: str(path) for name, path in self.owner.internal.iter_subsystems()}
 
     def environment(self) -> dict[str, Any]:
+        self._ensure_running()
         return {"python": sys.version, "implementation": platform.python_implementation(), "platform": platform.platform(), "machine": platform.machine(), "processor": platform.processor(), "hostname": platform.node(), "pid": os.getpid(), "cwd": str(Path.cwd()), "base_path": str(self.owner.files.base_path)}
 
     def resources(self) -> dict[str, Any]:
-        usage = shutil.disk_usage(self.owner.files.base_path)
-        result: dict[str, Any] = {"disk": {"total": usage.total, "used": usage.used, "free": usage.free}, "uptime": self.uptime, "pid": os.getpid()}
+        self._ensure_running()
+        try:
+            usage = shutil.disk_usage(self.owner.files.base_path)
+            disk = {"total": usage.total, "used": usage.used, "free": usage.free}
+        except OSError as exc:
+            disk = {"total": None, "used": None, "free": None, "error": f"{type(exc).__name__}: {exc}"}
+        result: dict[str, Any] = {"disk": disk, "uptime": self.uptime, "pid": os.getpid()}
         try:
             import resource
             value = resource.getrusage(resource.RUSAGE_SELF)
@@ -70,6 +82,7 @@ class AleraRuntime:
         return result
 
     def diagnostics(self, *, include_services: bool = True, deep: bool = False) -> dict[str, Any]:
+        self._ensure_running()
         try:
             import alera
             version = getattr(alera, "__version__", "unknown")
@@ -84,6 +97,7 @@ class AleraRuntime:
         return result
 
     def check_services(self) -> dict[str, dict[str, Any]]:
+        self._ensure_running()
         result: dict[str, dict[str, Any]] = {}
         for name, service in vars(self.owner).items():
             if name.startswith("_") or name in {"base_path", "operations", "runtime"}:
@@ -102,13 +116,15 @@ class AleraRuntime:
         return result
 
     def gc_collect(self, generation: int | None = None) -> dict[str, Any]:
+        self._ensure_running()
         before = gc.get_count()
         collected = gc.collect() if generation is None else gc.collect(generation)
         return {"collected": collected, "before": before, "after": gc.get_count()}
 
     def benchmark(self, service: str, method: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        self._ensure_running()
         target = self.service(service)
-        if method.startswith("_"):
+        if not method or method.startswith("_"):
             raise ValueError("Only public service methods may be benchmarked")
         callable_method = getattr(target, method, None)
         if not callable(callable_method):
@@ -121,7 +137,8 @@ class AleraRuntime:
             return {"ok": False, "service": service, "method": method, "elapsed": time.perf_counter() - started, "error_type": type(exc).__name__, "error": str(exc)}
 
     def call(self, service: str, method: str, *args: Any, **kwargs: Any) -> Any:
-        if method.startswith("_"):
+        self._ensure_running()
+        if not method or method.startswith("_"):
             raise ValueError("Only public service methods may be called")
         target = self.service(service)
         callable_method = getattr(target, method, None)
@@ -130,9 +147,11 @@ class AleraRuntime:
         return callable_method(*args, **kwargs)
 
     def on_event(self, event: str, callback: Callable[[Any], Any]) -> Any:
+        self._ensure_running()
         return self.owner.operations.on(event, callback)
 
     def emit(self, event: str, path: str = "", **metadata: Any) -> Any:
+        self._ensure_running()
         return self.owner.operations.emit(event, path, **metadata)
 
     def shutdown(self) -> None:
@@ -158,8 +177,7 @@ class AleraRuntime:
     close = shutdown
 
     def __enter__(self) -> "AleraRuntime":
-        if self._shutdown:
-            raise RuntimeError("Alera runtime has already been shut down")
+        self._ensure_running()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
